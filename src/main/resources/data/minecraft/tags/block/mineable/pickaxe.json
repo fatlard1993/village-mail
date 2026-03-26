@@ -1,0 +1,7 @@
+{
+	"replace": false,
+	"values": [
+		"village-mail:mailbox",
+		"village-mail:public_mailbox"
+	]
+}
