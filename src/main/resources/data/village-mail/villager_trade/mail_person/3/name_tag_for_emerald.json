@@ -1,0 +1,7 @@
+{
+  "gives": { "id": "minecraft:name_tag" },
+  "wants": { "id": "minecraft:emerald", "count": 15.0 },
+  "max_uses": 6.0,
+  "xp": 15.0,
+  "reputation_discount": 0.05
+}

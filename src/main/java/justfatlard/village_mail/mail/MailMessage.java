@@ -1,10 +1,10 @@
 package justfatlard.village_mail.mail;
 
-import net.minecraft.item.ItemStack;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtList;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtOps;
-import net.minecraft.registry.RegistryWrapper;
+import net.minecraft.core.HolderLookup;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,7 +31,7 @@ public class MailMessage {
 	private final MessageType type;
 	private final List<ItemStack> attachments;
 	private final List<MessageButton> buttons;
-	private final NbtCompound metadata;
+	private final CompoundTag metadata;
 
 	private volatile boolean read;
 	private volatile boolean itemsCollected;
@@ -54,7 +54,7 @@ public class MailMessage {
 		this.type = builder.type != null ? builder.type : MessageType.PLAYER;
 		this.attachments = new ArrayList<>(builder.attachments);
 		this.buttons = new ArrayList<>(builder.buttons);
-		this.metadata = builder.metadata != null ? builder.metadata.copy() : new NbtCompound();
+		this.metadata = builder.metadata != null ? builder.metadata.copy() : new CompoundTag();
 		this.read = builder.read;
 		this.itemsCollected = builder.itemsCollected;
 	}
@@ -64,7 +64,6 @@ public class MailMessage {
 		return body.length() > MAX_BODY_LENGTH ? body.substring(0, MAX_BODY_LENGTH) : body;
 	}
 
-	// Getters
 	public UUID getId() { return id; }
 	public UUID getSenderUuid() { return senderUuid; }
 	public String getSenderName() { return senderName; }
@@ -74,7 +73,7 @@ public class MailMessage {
 	public MessageType getType() { return type; }
 	public List<ItemStack> getAttachments() { return new ArrayList<>(attachments); }
 	public List<MessageButton> getButtons() { return new ArrayList<>(buttons); }
-	public NbtCompound getMetadata() { return metadata.copy(); }
+	public CompoundTag getMetadata() { return metadata.copy(); }
 	public boolean isRead() { return read; }
 	public boolean isItemsCollected() { return itemsCollected; }
 
@@ -86,7 +85,6 @@ public class MailMessage {
 		return hasAttachments() && !itemsCollected;
 	}
 
-	// Mutable state
 	public void setRead(boolean read) { this.read = read; }
 	public void setItemsCollected(boolean collected) { this.itemsCollected = collected; }
 
@@ -98,11 +96,9 @@ public class MailMessage {
 		return body.substring(0, 47) + "...";
 	}
 
-	// NBT Serialization
-	public NbtCompound toNbt(RegistryWrapper.WrapperLookup registries) {
-		NbtCompound nbt = new NbtCompound();
+	public CompoundTag toNbt(HolderLookup.Provider registries) {
+		CompoundTag nbt = new CompoundTag();
 
-		// Store UUIDs as strings (like existing codebase pattern)
 		nbt.putString("id", id.toString());
 		if (senderUuid != null) {
 			nbt.putString("senderUuid", senderUuid.toString());
@@ -115,29 +111,26 @@ public class MailMessage {
 		nbt.putBoolean("read", read);
 		nbt.putBoolean("itemsCollected", itemsCollected);
 
-		// Attachments - use codec-based serialization for 1.21.11+
 		if (!attachments.isEmpty()) {
-			NbtList attachmentList = new NbtList();
+			ListTag attachmentList = new ListTag();
 			for (ItemStack stack : attachments) {
 				if (!stack.isEmpty()) {
-					NbtCompound stackNbt = new NbtCompound();
-					stackNbt.copyFromCodec(ItemStack.MAP_CODEC, registries.getOps(NbtOps.INSTANCE), stack);
+					CompoundTag stackNbt = new CompoundTag();
+					stackNbt.store(ItemStack.MAP_CODEC, registries.createSerializationContext(NbtOps.INSTANCE), stack);
 					attachmentList.add(stackNbt);
 				}
 			}
 			nbt.put("attachments", attachmentList);
 		}
 
-		// Buttons
 		if (!buttons.isEmpty()) {
-			NbtList buttonList = new NbtList();
+			ListTag buttonList = new ListTag();
 			for (MessageButton button : buttons) {
 				buttonList.add(button.toNbt());
 			}
 			nbt.put("buttons", buttonList);
 		}
 
-		// Metadata
 		if (!metadata.isEmpty()) {
 			nbt.put("metadata", metadata.copy());
 		}
@@ -155,10 +148,9 @@ public class MailMessage {
 	 * @param registries The registry wrapper for item deserialization
 	 * @return The deserialized message, or {@code null} if the recipient UUID is missing/invalid
 	 */
-	public static MailMessage fromNbt(NbtCompound nbt, RegistryWrapper.WrapperLookup registries) {
+	public static MailMessage fromNbt(CompoundTag nbt, HolderLookup.Provider registries) {
 		Builder builder = new Builder();
 
-		// Parse UUIDs from strings
 		String idStr = nbt.getString("id").orElse("");
 		builder.id = idStr.isEmpty() ? UUID.randomUUID() : UUID.fromString(idStr);
 
@@ -187,11 +179,10 @@ public class MailMessage {
 		builder.read = nbt.getBoolean("read").orElse(false);
 		builder.itemsCollected = nbt.getBoolean("itemsCollected").orElse(false);
 
-		// Attachments - use codec-based deserialization for 1.21.11+
 		nbt.getList("attachments").ifPresent(attachmentList -> {
 			for (int i = 0; i < attachmentList.size(); i++) {
-				if (attachmentList.get(i) instanceof NbtCompound stackNbt) {
-					stackNbt.decode(ItemStack.MAP_CODEC, registries.getOps(NbtOps.INSTANCE)).ifPresent(stack -> {
+				if (attachmentList.get(i) instanceof CompoundTag stackNbt) {
+					stackNbt.read(ItemStack.MAP_CODEC, registries.createSerializationContext(NbtOps.INSTANCE)).ifPresent(stack -> {
 						if (!stack.isEmpty()) {
 							builder.attachments.add(stack);
 						}
@@ -200,16 +191,14 @@ public class MailMessage {
 			}
 		});
 
-		// Buttons
 		nbt.getList("buttons").ifPresent(buttonList -> {
 			for (int i = 0; i < buttonList.size(); i++) {
-				if (buttonList.get(i) instanceof NbtCompound buttonNbt) {
+				if (buttonList.get(i) instanceof CompoundTag buttonNbt) {
 					builder.buttons.add(MessageButton.fromNbt(buttonNbt));
 				}
 			}
 		});
 
-		// Metadata
 		nbt.getCompound("metadata").ifPresent(meta -> builder.metadata = meta.copy());
 
 		return builder.build();
@@ -228,7 +217,7 @@ public class MailMessage {
 		private MessageType type = MessageType.PLAYER;
 		private final List<ItemStack> attachments = new ArrayList<>();
 		private final List<MessageButton> buttons = new ArrayList<>();
-		private NbtCompound metadata;
+		private CompoundTag metadata;
 		private boolean read = false;
 		private boolean itemsCollected = false;
 
@@ -289,14 +278,14 @@ public class MailMessage {
 			return this;
 		}
 
-		public Builder metadata(NbtCompound metadata) {
+		public Builder metadata(CompoundTag metadata) {
 			this.metadata = metadata;
 			return this;
 		}
 
-		public Builder metadata(String key, NbtCompound data) {
+		public Builder metadata(String key, CompoundTag data) {
 			if (this.metadata == null) {
-				this.metadata = new NbtCompound();
+				this.metadata = new CompoundTag();
 			}
 			this.metadata.put(key, data);
 			return this;

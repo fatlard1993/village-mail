@@ -1,7 +1,7 @@
 package justfatlard.village_mail.mail;
 
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.util.Identifier;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.resources.Identifier;
 
 /**
  * Represents an interactive button in a mail message.
@@ -12,7 +12,7 @@ public class MessageButton {
 	private final String label;
 	private final ButtonType type;
 	private final Identifier handler; // For CUSTOM type: mod_id:handler_name
-	private final NbtCompound data;
+	private final CompoundTag data;
 
 	public enum ButtonType {
 		REPLY,           // Opens compose screen addressed to sender
@@ -23,24 +23,22 @@ public class MessageButton {
 		CUSTOM           // Fully custom action via registered handler
 	}
 
-	public MessageButton(String id, String label, ButtonType type, Identifier handler, NbtCompound data) {
+	public MessageButton(String id, String label, ButtonType type, Identifier handler, CompoundTag data) {
 		this.id = id;
 		this.label = label;
 		this.type = type;
 		this.handler = handler;
-		this.data = data != null ? data : new NbtCompound();
+		this.data = data != null ? data : new CompoundTag();
 	}
 
-	// Getters
 	public String getId() { return id; }
 	public String getLabel() { return label; }
 	public ButtonType getType() { return type; }
 	public Identifier getHandler() { return handler; }
-	public NbtCompound getData() { return data.copy(); }
+	public CompoundTag getData() { return data.copy(); }
 
-	// NBT Serialization
-	public NbtCompound toNbt() {
-		NbtCompound nbt = new NbtCompound();
+	public CompoundTag toNbt() {
+		CompoundTag nbt = new CompoundTag();
 		nbt.putString("id", id);
 		nbt.putString("label", label);
 		nbt.putString("type", type.name());
@@ -53,7 +51,7 @@ public class MessageButton {
 		return nbt;
 	}
 
-	public static MessageButton fromNbt(NbtCompound nbt) {
+	public static MessageButton fromNbt(CompoundTag nbt) {
 		String id = nbt.getString("id").orElse("");
 		String label = nbt.getString("label").orElse("");
 		ButtonType type;
@@ -65,11 +63,9 @@ public class MessageButton {
 		Identifier handler = nbt.getString("handler")
 			.map(Identifier::tryParse)
 			.orElse(null);
-		NbtCompound data = nbt.getCompound("data").orElse(new NbtCompound());
+		CompoundTag data = nbt.getCompound("data").orElse(new CompoundTag());
 		return new MessageButton(id, label, type, handler, data);
 	}
-
-	// Factory methods for common button types
 
 	/**
 	 * Creates a Reply button that opens compose screen addressed to sender.
@@ -97,7 +93,7 @@ public class MessageButton {
 	 * @param handler The mod handler identifier (e.g., "my-mod:accept_quest")
 	 * @param data Custom data to pass to the handler
 	 */
-	public static MessageButton accept(Identifier handler, NbtCompound data) {
+	public static MessageButton accept(Identifier handler, CompoundTag data) {
 		return new MessageButton("accept", "village-mail.button.accept", ButtonType.ACCEPT, handler, data);
 	}
 
@@ -106,7 +102,7 @@ public class MessageButton {
 	 * @param handler The mod handler identifier (e.g., "my-mod:decline_quest")
 	 * @param data Custom data to pass to the handler
 	 */
-	public static MessageButton decline(Identifier handler, NbtCompound data) {
+	public static MessageButton decline(Identifier handler, CompoundTag data) {
 		return new MessageButton("decline", "village-mail.button.decline", ButtonType.DECLINE, handler, data);
 	}
 
@@ -117,7 +113,7 @@ public class MessageButton {
 	 * @param handler The mod handler identifier
 	 * @param data Custom data to pass to the handler
 	 */
-	public static MessageButton custom(String id, String label, Identifier handler, NbtCompound data) {
+	public static MessageButton custom(String id, String label, Identifier handler, CompoundTag data) {
 		return new MessageButton(id, label, ButtonType.CUSTOM, handler, data);
 	}
 }

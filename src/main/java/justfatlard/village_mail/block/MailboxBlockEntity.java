@@ -1,24 +1,20 @@
 package justfatlard.village_mail.block;
 
-import net.minecraft.block.BlockState;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.entity.player.PlayerInventory;
-import net.minecraft.screen.NamedScreenHandlerFactory;
-import net.minecraft.screen.ScreenHandler;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.storage.ReadView;
-import net.minecraft.storage.WriteView;
-import net.minecraft.text.Text;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.storage.ValueInput;
+import net.minecraft.world.level.storage.ValueOutput;
+import net.minecraft.network.chat.Component;
+import net.minecraft.core.BlockPos;
 
 import java.util.UUID;
 
 import justfatlard.village_mail.Main;
 import justfatlard.village_mail.mail.PlayerMailStorage;
-import justfatlard.village_mail.screen.MessageListScreenHandler;
+import justfatlard.village_mail.pandorical.MailScreens;
 
-public class MailboxBlockEntity extends BlockEntity implements NamedScreenHandlerFactory {
+public class MailboxBlockEntity extends BlockEntity {
 	private UUID ownerUuid = null;
 	private String ownerName = "Village";
 
@@ -27,22 +23,22 @@ public class MailboxBlockEntity extends BlockEntity implements NamedScreenHandle
 	}
 
 	@Override
-	protected void writeData(WriteView view) {
-		super.writeData(view);
+	protected void saveAdditional(ValueOutput output) {
+		super.saveAdditional(output);
 		if (ownerUuid != null) {
-			view.putString("OwnerUuid", ownerUuid.toString());
-			view.putString("OwnerName", ownerName);
+			output.putString("OwnerUuid", ownerUuid.toString());
+			output.putString("OwnerName", ownerName);
 		}
 	}
 
 	@Override
-	protected void readData(ReadView view) {
-		super.readData(view);
-		String ownerUuidStr = view.getString("OwnerUuid", null);
+	protected void loadAdditional(ValueInput input) {
+		super.loadAdditional(input);
+		String ownerUuidStr = input.getString("OwnerUuid").orElse(null);
 		if (ownerUuidStr != null) {
 			try {
 				ownerUuid = UUID.fromString(ownerUuidStr);
-				ownerName = view.getString("OwnerName", "Unknown");
+				ownerName = input.getStringOr("OwnerName", "Unknown");
 			} catch (IllegalArgumentException e) {
 				ownerUuid = null;
 				ownerName = "Village";
@@ -53,35 +49,29 @@ public class MailboxBlockEntity extends BlockEntity implements NamedScreenHandle
 	public UUID getOwnerUuid() { return ownerUuid; }
 	public String getOwnerName() { return ownerName; }
 
-	public void setOwner(ServerPlayerEntity player) {
-		this.ownerUuid = player.getUuid();
+	public void setOwner(ServerPlayer player) {
+		this.ownerUuid = player.getUUID();
 		this.ownerName = player.getName().getString();
-		markDirty();
+		setChanged();
 	}
 
-	@Override
-	public Text getDisplayName() {
-		return Text.translatable("village-mail.screen.mailbox_title", ownerName);
+	public Component getDisplayName() {
+		return Component.translatable("village-mail.screen.mailbox_title", ownerName);
 	}
 
-	@Override
-	public ScreenHandler createMenu(int syncId, PlayerInventory playerInventory, PlayerEntity player) {
-		return new MessageListScreenHandler(syncId, playerInventory, this.pos);
-	}
-
-	public void openGui(ServerPlayerEntity player) {
+	public void openGui(ServerPlayer player) {
 		// Only the owner can access their personal mailbox
-		if (ownerUuid != null && !ownerUuid.equals(player.getUuid())) {
-			player.sendMessage(Text.translatable("village-mail.screen.mailbox_belongs_to", ownerName), true);
+		if (ownerUuid != null && !ownerUuid.equals(player.getUUID())) {
+			player.sendSystemMessage(Component.translatable("village-mail.screen.mailbox_belongs_to", ownerName), true);
 			return;
 		}
 		// Register this mailbox as the player's active mailbox (updates location + delivers pending)
 		if (ownerUuid != null) {
-			PlayerMailStorage storage = PlayerMailStorage.get(player.getEntityWorld().getServer());
-			String dimension = player.getEntityWorld().getRegistryKey().getValue().toString();
-			storage.registerMailbox(player.getUuid(), dimension, this.pos);
+			PlayerMailStorage storage = PlayerMailStorage.get(player.level().getServer());
+			String dimension = player.level().dimension().identifier().toString();
+			storage.registerMailbox(player.getUUID(), dimension, this.worldPosition);
 		}
-		player.openHandledScreen(this);
+		MailScreens.openMailbox(player, ownerName);
 	}
 
 }

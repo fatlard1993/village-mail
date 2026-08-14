@@ -1,17 +1,17 @@
 package justfatlard.village_mail.mail;
 
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
-import net.minecraft.nbt.NbtCompound;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtIo;
-import net.minecraft.nbt.NbtList;
-import net.minecraft.nbt.NbtSizeTracker;
-import net.minecraft.registry.RegistryWrapper;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.NbtAccounter;
+import net.minecraft.core.HolderLookup;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.util.WorldSavePath;
+import net.minecraft.world.level.storage.LevelResource;
 
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.network.chat.Component;
+import net.minecraft.ChatFormatting;
 
 import java.io.File;
 import java.nio.file.Files;
@@ -52,21 +52,19 @@ public class PlayerMailStorage {
 	private final Map<UUID, String> playerNames = new HashMap<>();
 
 	// Villager mail cooldowns: mailbox BlockPos -> last delivery world time
-	private final Map<net.minecraft.util.math.BlockPos, Long> villagerMailCooldowns = new HashMap<>();
+	private final Map<net.minecraft.core.BlockPos, Long> villagerMailCooldowns = new HashMap<>();
 
-	// Server reference for saving
 	private MinecraftServer server;
 
-	// Auto-save: ticks between saves, and counter
 	private static final int AUTO_SAVE_INTERVAL = 6000; // 5 minutes in ticks
 	private int ticksSinceLastSave = 0;
 
 	/**
 	 * Tracks a mailbox's physical location for delivery lookup.
 	 */
-	public record MailboxLocation(String dimension, net.minecraft.util.math.BlockPos pos) {
-		public NbtCompound toNbt() {
-			NbtCompound nbt = new NbtCompound();
+	public record MailboxLocation(String dimension, net.minecraft.core.BlockPos pos) {
+		public CompoundTag toNbt() {
+			CompoundTag nbt = new CompoundTag();
 			nbt.putString("dimension", dimension);
 			nbt.putInt("x", pos.getX());
 			nbt.putInt("y", pos.getY());
@@ -74,12 +72,12 @@ public class PlayerMailStorage {
 			return nbt;
 		}
 
-		public static MailboxLocation fromNbt(NbtCompound nbt) {
+		public static MailboxLocation fromNbt(CompoundTag nbt) {
 			String dim = nbt.getString("dimension").orElse("minecraft:overworld");
 			int x = nbt.getInt("x").orElse(0);
 			int y = nbt.getInt("y").orElse(0);
 			int z = nbt.getInt("z").orElse(0);
-			return new MailboxLocation(dim, new net.minecraft.util.math.BlockPos(x, y, z));
+			return new MailboxLocation(dim, new net.minecraft.core.BlockPos(x, y, z));
 		}
 	}
 
@@ -95,7 +93,7 @@ public class PlayerMailStorage {
 				INSTANCE.server = server;
 				INSTANCE.load();
 			} else {
-				LOGGER.warn("PlayerMailStorage was pre-initialized before SERVER_STARTED (via get()) — skipping re-creation");
+				LOGGER.warn("PlayerMailStorage was pre-initialized before SERVER_STARTED (via get()), skipping re-creation");
 				// Update server reference in case it changed (e.g. integrated server restart)
 				INSTANCE.server = server;
 			}
@@ -167,16 +165,15 @@ public class PlayerMailStorage {
 		while (messages.size() >= HARD_MESSAGE_CAP) {
 			MailMessage removed = messages.remove(messages.size() - 1);
 			if (removed.hasUncollectedItems()) itemsLost = true;
-			LOGGER.warn("Hard cap ({}) reached — forcibly removing oldest message {} (uncollected items lost: {})",
+			LOGGER.warn("Hard cap ({}) reached, forcibly removing oldest message {} (uncollected items lost: {})",
 				HARD_MESSAGE_CAP, removed.getId(), removed.hasUncollectedItems());
 		}
-		// Notify player in-game if items were destroyed
 		if (itemsLost && server != null) {
-			ServerPlayerEntity player = server.getPlayerManager().getPlayer(playerUuid);
+			ServerPlayer player = server.getPlayerList().getPlayer(playerUuid);
 			if (player != null) {
-				player.sendMessage(
-					Text.translatable("village-mail.feedback.mailbox_full")
-						.formatted(Formatting.RED),
+				player.sendSystemMessage(
+					Component.translatable("village-mail.feedback.mailbox_full")
+						.withStyle(ChatFormatting.RED),
 					false
 				);
 			}
@@ -202,9 +199,9 @@ public class PlayerMailStorage {
 					}
 				}
 			}
-			// All remaining messages have uncollected items — allow overflow up to hard cap
+			// All remaining messages have uncollected items: allow overflow up to hard cap
 			if (removeIdx == -1) {
-				LOGGER.warn("Mailbox at cap ({}) but all messages have uncollected items — allowing overflow (hard cap: {})",
+				LOGGER.warn("Mailbox at cap ({}) but all messages have uncollected items; allowing overflow (hard cap: {})",
 					MAX_MESSAGES_PER_PLAYER, HARD_MESSAGE_CAP);
 				break;
 			}
@@ -215,14 +212,10 @@ public class PlayerMailStorage {
 	/**
 	 * Get all messages for a player (both read and unread).
 	 *
-	 * Returns a shallow copy of the message list — callers may safely add/remove
-	 * from the returned list without affecting storage. However, the MailMessage
-	 * objects inside are shared references: mutations (e.g. setRead, setItemsCollected)
-	 * propagate to the stored originals. This is intentional — markAsRead() and
-	 * handleCollectItems() rely on mutating through these shared references.
-	 *
-	 * Do NOT deep-copy the messages without updating all mutation paths
-	 * (markAsRead, markItemsCollected, and any code that retrieves then mutates).
+	 * Returns a shallow copy: callers may add/remove freely, but the MailMessage
+	 * objects are shared references and mutations (setRead, setItemsCollected)
+	 * propagate to storage. markAsRead() and handleCollectItems() depend on that;
+	 * do not deep-copy without updating every mutation path.
 	 */
 	public List<MailMessage> getMessages(UUID playerUuid) {
 		return new ArrayList<>(playerMessages.getOrDefault(playerUuid, Collections.emptyList()));
@@ -249,13 +242,8 @@ public class PlayerMailStorage {
 	/**
 	 * Get a specific message by ID.
 	 *
-	 * Returns the actual stored MailMessage object, not a copy. Mutations to the
-	 * returned object (e.g. setRead, setItemsCollected) directly modify storage state.
-	 * Call markDirty() or use the dedicated markAsRead/markItemsCollected methods
-	 * to ensure changes are persisted.
-	 *
-	 * Searches the backing list directly (not via getMessages()) so mutations
-	 * to the returned object always propagate to storage.
+	 * Returns the stored MailMessage itself, not a copy: mutations modify storage
+	 * state directly. Persist changes via markAsRead/markItemsCollected or markDirty().
 	 */
 	public Optional<MailMessage> getMessage(UUID playerUuid, UUID messageId) {
 		List<MailMessage> messages = playerMessages.get(playerUuid);
@@ -298,7 +286,6 @@ public class PlayerMailStorage {
 
 	/**
 	 * Get unread message count for a player.
-	 * Streams the internal list directly to avoid the list copy that getMessages() creates.
 	 */
 	public int getUnreadCount(UUID playerUuid) {
 		return (int) playerMessages.getOrDefault(playerUuid, Collections.emptyList()).stream()
@@ -319,19 +306,17 @@ public class PlayerMailStorage {
 	 * Register that a player has placed a mailbox, with its physical location.
 	 * Delivers any pending messages.
 	 */
-	public void registerMailbox(UUID playerUuid, String dimension, net.minecraft.util.math.BlockPos pos) {
+	public void registerMailbox(UUID playerUuid, String dimension, net.minecraft.core.BlockPos pos) {
 		playersWithMailbox.add(playerUuid);
 		mailboxLocations.put(playerUuid, new MailboxLocation(dimension, pos));
 
-		// Update player name cache from server if possible
 		if (server != null) {
-			var player = server.getPlayerManager().getPlayer(playerUuid);
+			var player = server.getPlayerList().getPlayer(playerUuid);
 			if (player != null) {
 				playerNames.put(playerUuid, player.getName().getString());
 			}
 		}
 
-		// Deliver pending messages
 		List<MailMessage> pending = pendingMessages.remove(playerUuid);
 		if (pending != null && !pending.isEmpty()) {
 			playerMessages.computeIfAbsent(playerUuid, k -> new ArrayList<>()).addAll(0, pending);
@@ -355,14 +340,14 @@ public class PlayerMailStorage {
 
 	/**
 	 * Unregister a mailbox when it's broken. Only removes the location if it matches.
-	 * The player stays in playersWithMailbox — they placed a mailbox once, so they can
+	 * The player stays in playersWithMailbox: they placed a mailbox once, so they can
 	 * still receive mail. They'll re-register a location when they open any mailbox.
 	 */
-	public void unregisterMailbox(UUID playerUuid, net.minecraft.util.math.BlockPos pos) {
+	public void unregisterMailbox(UUID playerUuid, net.minecraft.core.BlockPos pos) {
 		MailboxLocation loc = mailboxLocations.get(playerUuid);
 		if (loc != null && loc.pos().equals(pos)) {
 			mailboxLocations.remove(playerUuid);
-			// Don't remove from playersWithMailbox — the player may have other mailboxes,
+			// Don't remove from playersWithMailbox: the player may have other mailboxes,
 			// and removing them would redirect all future mail to the pending queue.
 			markDirty();
 		}
@@ -408,14 +393,14 @@ public class PlayerMailStorage {
 	/**
 	 * Get the last villager mail time for a mailbox position.
 	 */
-	public Optional<Long> getVillagerMailCooldown(net.minecraft.util.math.BlockPos pos) {
+	public Optional<Long> getVillagerMailCooldown(net.minecraft.core.BlockPos pos) {
 		return Optional.ofNullable(villagerMailCooldowns.get(pos));
 	}
 
 	/**
 	 * Set the last villager mail time for a mailbox position.
 	 */
-	public void setVillagerMailCooldown(net.minecraft.util.math.BlockPos pos, long worldTime) {
+	public void setVillagerMailCooldown(net.minecraft.core.BlockPos pos, long worldTime) {
 		villagerMailCooldowns.put(pos, worldTime);
 		markDirty();
 	}
@@ -454,21 +439,21 @@ public class PlayerMailStorage {
 
 	private File getDataFile() {
 		if (server == null) return null;
-		Path dataDir = server.getSavePath(WorldSavePath.ROOT).resolve("data");
+		Path dataDir = server.getWorldPath(LevelResource.ROOT).resolve("data");
 		return dataDir.resolve(DATA_FILE).toFile();
 	}
 
 	public void save() {
 		if (!dirty || server == null) return;
 
-		RegistryWrapper.WrapperLookup registries = server.getRegistryManager();
-		NbtCompound nbt = new NbtCompound();
+		HolderLookup.Provider registries = server.registryAccess();
+		CompoundTag nbt = new CompoundTag();
 		nbt.putInt("dataVersion", DATA_VERSION);
 
 		// Player messages
-		NbtCompound messagesNbt = new NbtCompound();
+		CompoundTag messagesNbt = new CompoundTag();
 		for (Map.Entry<UUID, List<MailMessage>> entry : playerMessages.entrySet()) {
-			NbtList messageList = new NbtList();
+			ListTag messageList = new ListTag();
 			for (MailMessage message : entry.getValue()) {
 				messageList.add(message.toNbt(registries));
 			}
@@ -476,19 +461,19 @@ public class PlayerMailStorage {
 		}
 		nbt.put("playerMessages", messagesNbt);
 
-		// Players with mailboxes - store UUIDs as strings in a list
-		NbtList mailboxPlayersNbt = new NbtList();
+		// Players with mailboxes
+		ListTag mailboxPlayersNbt = new ListTag();
 		for (UUID uuid : playersWithMailbox) {
-			NbtCompound uuidNbt = new NbtCompound();
+			CompoundTag uuidNbt = new CompoundTag();
 			uuidNbt.putString("uuid", uuid.toString());
 			mailboxPlayersNbt.add(uuidNbt);
 		}
 		nbt.put("playersWithMailbox", mailboxPlayersNbt);
 
 		// Pending messages
-		NbtCompound pendingNbt = new NbtCompound();
+		CompoundTag pendingNbt = new CompoundTag();
 		for (Map.Entry<UUID, List<MailMessage>> entry : pendingMessages.entrySet()) {
-			NbtList messageList = new NbtList();
+			ListTag messageList = new ListTag();
 			for (MailMessage message : entry.getValue()) {
 				messageList.add(message.toNbt(registries));
 			}
@@ -497,23 +482,23 @@ public class PlayerMailStorage {
 		nbt.put("pendingMessages", pendingNbt);
 
 		// Mailbox locations
-		NbtCompound locationsNbt = new NbtCompound();
+		CompoundTag locationsNbt = new CompoundTag();
 		for (Map.Entry<UUID, MailboxLocation> entry : mailboxLocations.entrySet()) {
 			locationsNbt.put(entry.getKey().toString(), entry.getValue().toNbt());
 		}
 		nbt.put("mailboxLocations", locationsNbt);
 
 		// Player names
-		NbtCompound namesNbt = new NbtCompound();
+		CompoundTag namesNbt = new CompoundTag();
 		for (Map.Entry<UUID, String> entry : playerNames.entrySet()) {
 			namesNbt.putString(entry.getKey().toString(), entry.getValue());
 		}
 		nbt.put("playerNames", namesNbt);
 
 		// Villager mail cooldowns
-		NbtCompound cooldownsNbt = new NbtCompound();
-		for (Map.Entry<net.minecraft.util.math.BlockPos, Long> entry : villagerMailCooldowns.entrySet()) {
-			NbtCompound posNbt = new NbtCompound();
+		CompoundTag cooldownsNbt = new CompoundTag();
+		for (Map.Entry<net.minecraft.core.BlockPos, Long> entry : villagerMailCooldowns.entrySet()) {
+			CompoundTag posNbt = new CompoundTag();
 			posNbt.putInt("x", entry.getKey().getX());
 			posNbt.putInt("y", entry.getKey().getY());
 			posNbt.putInt("z", entry.getKey().getZ());
@@ -585,25 +570,25 @@ public class PlayerMailStorage {
 			}
 		}
 
-		RegistryWrapper.WrapperLookup registries = server.getRegistryManager();
+		HolderLookup.Provider registries = server.registryAccess();
 
 		try {
-			NbtCompound nbt = NbtIo.readCompressed(file.toPath(), NbtSizeTracker.of(128L * 1024 * 1024));
+			CompoundTag nbt = NbtIo.readCompressed(file.toPath(), NbtAccounter.create(128L * 1024 * 1024));
 
 			int savedVersion = nbt.getInt("dataVersion").orElse(0);
 			if (savedVersion > DATA_VERSION) {
-				LOGGER.warn("Mail data is from a newer version ({} > {}), loading anyway — some data may be lost",
+				LOGGER.warn("Mail data is from a newer version ({} > {}), loading anyway; some data may be lost",
 					savedVersion, DATA_VERSION);
 			}
 
 			// Player messages
 			nbt.getCompound("playerMessages").ifPresent(messagesNbt -> {
-				for (String uuidStr : messagesNbt.getKeys()) {
+				for (String uuidStr : messagesNbt.keySet()) {
 					UUID playerUuid = UUID.fromString(uuidStr);
 					messagesNbt.getList(uuidStr).ifPresent(messageList -> {
 						List<MailMessage> messages = new ArrayList<>();
 						for (int i = 0; i < messageList.size(); i++) {
-							if (messageList.get(i) instanceof NbtCompound msgNbt) {
+							if (messageList.get(i) instanceof CompoundTag msgNbt) {
 								try {
 									MailMessage msg = MailMessage.fromNbt(msgNbt, registries);
 									if (msg != null) {
@@ -622,7 +607,7 @@ public class PlayerMailStorage {
 			// Players with mailboxes
 			nbt.getList("playersWithMailbox").ifPresent(mailboxPlayersNbt -> {
 				for (int i = 0; i < mailboxPlayersNbt.size(); i++) {
-					if (mailboxPlayersNbt.get(i) instanceof NbtCompound uuidNbt) {
+					if (mailboxPlayersNbt.get(i) instanceof CompoundTag uuidNbt) {
 						uuidNbt.getString("uuid").ifPresent(uuidStr -> {
 							if (!uuidStr.isEmpty()) {
 								try {
@@ -638,12 +623,12 @@ public class PlayerMailStorage {
 
 			// Pending messages
 			nbt.getCompound("pendingMessages").ifPresent(pendingNbt -> {
-				for (String uuidStr : pendingNbt.getKeys()) {
+				for (String uuidStr : pendingNbt.keySet()) {
 					UUID playerUuid = UUID.fromString(uuidStr);
 					pendingNbt.getList(uuidStr).ifPresent(messageList -> {
 						List<MailMessage> messages = new ArrayList<>();
 						for (int i = 0; i < messageList.size(); i++) {
-							if (messageList.get(i) instanceof NbtCompound msgNbt) {
+							if (messageList.get(i) instanceof CompoundTag msgNbt) {
 								try {
 									MailMessage msg = MailMessage.fromNbt(msgNbt, registries);
 									if (msg != null) {
@@ -661,7 +646,7 @@ public class PlayerMailStorage {
 
 			// Mailbox locations
 			nbt.getCompound("mailboxLocations").ifPresent(locationsNbt -> {
-				for (String uuidStr : locationsNbt.getKeys()) {
+				for (String uuidStr : locationsNbt.keySet()) {
 					UUID playerUuid = UUID.fromString(uuidStr);
 					locationsNbt.getCompound(uuidStr).ifPresent(locNbt -> {
 						mailboxLocations.put(playerUuid, MailboxLocation.fromNbt(locNbt));
@@ -672,7 +657,7 @@ public class PlayerMailStorage {
 
 			// Player names
 			nbt.getCompound("playerNames").ifPresent(namesNbt -> {
-				for (String uuidStr : namesNbt.getKeys()) {
+				for (String uuidStr : namesNbt.keySet()) {
 					try {
 						UUID playerUuid = UUID.fromString(uuidStr);
 						namesNbt.getString(uuidStr).ifPresent(name -> {
@@ -688,13 +673,13 @@ public class PlayerMailStorage {
 
 			// Villager mail cooldowns
 			nbt.getCompound("villagerMailCooldowns").ifPresent(cooldownsNbt -> {
-				for (String key : cooldownsNbt.getKeys()) {
+				for (String key : cooldownsNbt.keySet()) {
 					cooldownsNbt.getCompound(key).ifPresent(posNbt -> {
 						int cx = posNbt.getInt("x").orElse(0);
 						int cy = posNbt.getInt("y").orElse(0);
 						int cz = posNbt.getInt("z").orElse(0);
 						long time = posNbt.getLong("time").orElse(0L);
-						villagerMailCooldowns.put(new net.minecraft.util.math.BlockPos(cx, cy, cz), time);
+						villagerMailCooldowns.put(new net.minecraft.core.BlockPos(cx, cy, cz), time);
 					});
 				}
 			});

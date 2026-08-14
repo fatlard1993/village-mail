@@ -3,8 +3,8 @@ package justfatlard.village_mail.api;
 import justfatlard.village_mail.mail.MailMessage;
 import justfatlard.village_mail.mail.MessageButton;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.util.Identifier;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.resources.Identifier;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -21,19 +21,12 @@ import org.slf4j.LoggerFactory;
  */
 public class MailApiImpl {
 	private static final Logger LOGGER = LoggerFactory.getLogger("village-mail");
-	// Button handler registry: handler ID -> handler function
 	private static final Map<Identifier, MailApi.ButtonHandler> buttonHandlers = new ConcurrentHashMap<>();
 
-	// Event callbacks
 	private static final List<BiConsumer<UUID, MailMessage>> messageReadCallbacks = new ArrayList<>();
 	private static final List<BiConsumer<UUID, MailMessage>> itemsCollectedCallbacks = new ArrayList<>();
 	private static final List<BiConsumer<UUID, MailMessage>> messageSentCallbacks = new ArrayList<>();
 
-	// ========== Handler Registry ==========
-
-	/**
-	 * Register a button handler.
-	 */
 	static void registerHandler(Identifier id, MailApi.ButtonHandler handler) {
 		buttonHandlers.put(id, handler);
 		LOGGER.info("Registered button handler: " + id);
@@ -47,7 +40,7 @@ public class MailApiImpl {
 	public static boolean invokeButtonHandler(
 			Identifier handlerId,
 			MinecraftServer server,
-			ServerPlayerEntity player,
+			ServerPlayer player,
 			MailMessage message,
 			MessageButton button) {
 
@@ -64,14 +57,9 @@ public class MailApiImpl {
 		return false;
 	}
 
-	/**
-	 * Check if a handler is registered.
-	 */
 	public static boolean hasHandler(Identifier handlerId) {
 		return buttonHandlers.containsKey(handlerId);
 	}
-
-	// ========== Event Callbacks ==========
 
 	static void addMessageReadCallback(BiConsumer<UUID, MailMessage> callback) {
 		synchronized (messageReadCallbacks) {
@@ -91,11 +79,6 @@ public class MailApiImpl {
 		}
 	}
 
-	// ========== Event Firing ==========
-
-	/**
-	 * Fire the message read event.
-	 */
 	public static void fireMessageRead(UUID playerUuid, MailMessage message) {
 		List<BiConsumer<UUID, MailMessage>> callbacks;
 		synchronized (messageReadCallbacks) {
@@ -110,9 +93,6 @@ public class MailApiImpl {
 		}
 	}
 
-	/**
-	 * Fire the items collected event.
-	 */
 	public static void fireItemsCollected(UUID playerUuid, MailMessage message) {
 		List<BiConsumer<UUID, MailMessage>> callbacks;
 		synchronized (itemsCollectedCallbacks) {
@@ -127,9 +107,6 @@ public class MailApiImpl {
 		}
 	}
 
-	/**
-	 * Fire the message sent event.
-	 */
 	public static void fireMessageSent(UUID recipientUuid, MailMessage message) {
 		List<BiConsumer<UUID, MailMessage>> callbacks;
 		synchronized (messageSentCallbacks) {

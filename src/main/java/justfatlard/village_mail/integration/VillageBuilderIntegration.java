@@ -1,13 +1,13 @@
 package justfatlard.village_mail.integration;
 
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.text.Text;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
+import net.minecraft.core.BlockPos;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
@@ -32,14 +32,13 @@ import org.slf4j.LoggerFactory;
 public class VillageBuilderIntegration {
 	private static final Logger LOGGER = LoggerFactory.getLogger("village-mail");
 
-	// Cached reflection references — loaded once, reused forever
 	private static boolean reflectionInitialized = false;
 	private static boolean available = false;
 
 	// VillageBuilderAPI methods
 	private static Method cachedRegisterTemplatePersistentMethod;  // (Identifier, String, Set<VillageNeed>, List<MaterialRequirement>, Set<String>, int)
-	private static Method cachedProcessDonatedMaterialsMethod;     // (ServerWorld, BlockPos, List<ItemStack>) -> DonationResult
-	private static Method cachedGetConstructionStatusMethod;       // (ServerWorld, BlockPos) -> Text
+	private static Method cachedProcessDonatedMaterialsMethod;     // (ServerLevel, BlockPos, List<ItemStack>) -> DonationResult
+	private static Method cachedGetConstructionStatusMethod;       // (ServerLevel, BlockPos) -> Component
 
 	// VillageNeed enum
 	private static Object cachedNeedProfession;  // VillageNeed.PROFESSION
@@ -75,17 +74,14 @@ public class VillageBuilderIntegration {
 				"justfatlard.village_builder.building.StructureType$MaterialRequirement");
 			cachedMaterialReqConstructor = matReqClass.getDeclaredConstructor(Item.class, int.class);
 
-			// registerTemplatePersistent(Identifier, String, Set<VillageNeed>, List<MaterialRequirement>, Set<String>, int)
 			cachedRegisterTemplatePersistentMethod = apiClass.getMethod("registerTemplatePersistent",
 				Identifier.class, String.class, Set.class, List.class, Set.class, int.class);
 
-			// processDonatedMaterials(ServerWorld, BlockPos, List<ItemStack>) -> DonationResult
 			cachedProcessDonatedMaterialsMethod = apiClass.getMethod("processDonatedMaterials",
-				ServerWorld.class, BlockPos.class, List.class);
+				ServerLevel.class, BlockPos.class, List.class);
 
-			// getConstructionStatus(ServerWorld, BlockPos) -> Text
 			cachedGetConstructionStatusMethod = apiClass.getMethod("getConstructionStatus",
-				ServerWorld.class, BlockPos.class);
+				ServerLevel.class, BlockPos.class);
 
 			available = true;
 			LOGGER.info("Village Builder integration available");
@@ -98,13 +94,8 @@ public class VillageBuilderIntegration {
 
 	/**
 	 * Register village-mail structures with Village Builder.
-	 *
-	 * Uses registerTemplatePersistent() — material requirements are auto-derived
-	 * from the NBT block composition at world load.  Fallback requirements are
-	 * provided in case template analysis fails.
-	 *
-	 * Each biome variant is registered with its biome preference so the builder
-	 * picks the right style for the village.
+	 * Each biome variant carries its biome preference so the builder picks the
+	 * right style for the village; fallback materials cover NBT analysis failure.
 	 */
 	public static void registerStructures() {
 		initReflection();
@@ -113,7 +104,6 @@ public class VillageBuilderIntegration {
 		LOGGER.info("Village Builder found, registering post office structures...");
 
 		try {
-			// Fallback materials for post offices (used if NBT analysis fails)
 			List<Object> postOfficeFallback = List.of(
 				cachedMaterialReqConstructor.newInstance(Items.STONE, 160),
 				cachedMaterialReqConstructor.newInstance(Items.OAK_LOG, 80),
@@ -122,14 +112,13 @@ public class VillageBuilderIntegration {
 				cachedMaterialReqConstructor.newInstance(Items.IRON_INGOT, 16)
 			);
 
-			// Register biome-specific post offices
-			// PROFESSION (provides mail person workstation) + PROSPERITY (community building)
+			// PROFESSION (mail person workstation) + PROSPERITY (community building)
 			Set<Object> postOfficeNeeds = Set.of(cachedNeedProfession, cachedNeedProsperity);
 
 			String[] biomes = {"plains", "desert", "savanna", "taiga", "snowy"};
 			for (String biome : biomes) {
 				cachedRegisterTemplatePersistentMethod.invoke(null,
-					Identifier.of("village-mail", "post_office_" + biome),
+					Identifier.fromNamespaceAndPath("village-mail", "post_office_" + biome),
 					formatName(biome) + " Post Office",
 					postOfficeNeeds,
 					postOfficeFallback,
@@ -139,15 +128,14 @@ public class VillageBuilderIntegration {
 				LOGGER.info("Registered {} post office (biome: {})", biome, biome);
 			}
 
-			// Fallback materials for public mailbox
 			List<Object> mailboxFallback = List.of(
 				cachedMaterialReqConstructor.newInstance(Items.OAK_LOG, 12),
 				cachedMaterialReqConstructor.newInstance(Items.IRON_INGOT, 4)
 			);
 
-			// Public mailbox — PROSPERITY need (village atmosphere), any biome
+			// Public mailbox: PROSPERITY need (village atmosphere), any biome
 			cachedRegisterTemplatePersistentMethod.invoke(null,
-				Identifier.of("village-mail", "public_mailbox"),
+				Identifier.fromNamespaceAndPath("village-mail", "public_mailbox"),
 				"Public Mailbox",
 				Set.of(cachedNeedProsperity),
 				mailboxFallback,
@@ -168,62 +156,82 @@ public class VillageBuilderIntegration {
 	}
 
 	/**
-	 * Process donated items through the Village Builder system.
-	 * Items needed for construction are accepted; the rest are returned.
+	 * Outcome of routing a donation through Village Builder.
 	 *
-	 * The API returns a DonationResult record with accepted/rejected lists.
-	 * We extract the rejected list as "remaining items."
+	 * @param rejected     non-building-material items the village won't accept; the
+	 *                     recoverable ItemStacks the caller must return to the sender.
+	 * @param overflowLost count of building-material items that were accepted in
+	 *                     principle but did not fit the village's 27-slot inventory.
+	 *                     Village Builder's API path destroys these silently (only a
+	 *                     count survives, not the item objects), so the caller can only
+	 *                     surface the count to the sender, not the items themselves.
 	 */
-	public static List<ItemStack> processDonation(ServerWorld world, BlockPos donationPos, List<ItemStack> donatedItems) {
+	public record DonationOutcome(List<ItemStack> rejected, int overflowLost) {}
+
+	/**
+	 * Process donated items through the Village Builder system.
+	 * Items needed for construction are accepted; the rest are returned as
+	 * {@link DonationOutcome#rejected()}. Building materials that don't fit the
+	 * village inventory are reported as {@link DonationOutcome#overflowLost()} — the
+	 * caller must surface that count so the sender is told their materials were lost
+	 * (see village-builder INTEGRATION_EXAMPLE.md: API-path overflow is silently
+	 * destroyed, not dropped as entities).
+	 */
+	public static DonationOutcome processDonation(ServerLevel world, BlockPos donationPos, List<ItemStack> donatedItems) {
 		initReflection();
 		if (!available) {
-			return donatedItems;
+			return new DonationOutcome(donatedItems, 0);
 		}
 
 		try {
-			// processDonatedMaterials(ServerWorld, BlockPos, List<ItemStack>) -> DonationResult
 			Object donationResult = cachedProcessDonatedMaterialsMethod.invoke(null,
 				world, donationPos, donatedItems);
 
 			if (donationResult == null) {
-				return donatedItems;
+				return new DonationOutcome(donatedItems, 0);
 			}
 
-			// DonationResult has: accepted(), rejected(), overflowLost()
+			// DonationResult record: accepted(), rejected() -> List<ItemStack>; overflowLost() -> int
 			Method acceptedMethod = donationResult.getClass().getMethod("accepted");
 			Method rejectedMethod = donationResult.getClass().getMethod("rejected");
+			Method overflowLostMethod = donationResult.getClass().getMethod("overflowLost");
 
 			@SuppressWarnings("unchecked")
 			List<ItemStack> accepted = (List<ItemStack>) acceptedMethod.invoke(donationResult);
 			@SuppressWarnings("unchecked")
 			List<ItemStack> rejected = (List<ItemStack>) rejectedMethod.invoke(donationResult);
+			int overflowLost = (int) overflowLostMethod.invoke(donationResult);
 
 			if (accepted != null && !accepted.isEmpty()) {
 				int totalAccepted = accepted.stream().mapToInt(ItemStack::getCount).sum();
 				LOGGER.info("Village Builder accepted {} items for construction", totalAccepted);
 			}
 
-			return rejected != null ? rejected : new ArrayList<>();
+			if (overflowLost > 0) {
+				LOGGER.warn("Village Builder reported {} donated building-material items lost to inventory overflow", overflowLost);
+			}
+
+			return new DonationOutcome(rejected != null ? rejected : new ArrayList<>(), overflowLost);
 
 		} catch (Exception e) {
 			LOGGER.error("Failed to process donation through Village Builder: {}", e.getMessage());
-			return donatedItems;
+			return new DonationOutcome(donatedItems, 0);
 		}
 	}
 
 	/**
 	 * Get construction status text from Village Builder.
 	 *
-	 * @return Text describing current construction, or null if none
+	 * @return Component describing current construction, or null if none
 	 */
-	public static Text getConstructionStatus(ServerWorld world, BlockPos villagePos) {
+	public static Component getConstructionStatus(ServerLevel world, BlockPos villagePos) {
 		initReflection();
 		if (!available) {
 			return null;
 		}
 
 		try {
-			return (Text) cachedGetConstructionStatusMethod.invoke(null, world, villagePos);
+			return (Component) cachedGetConstructionStatusMethod.invoke(null, world, villagePos);
 		} catch (Exception e) {
 			return null;
 		}

@@ -63,6 +63,7 @@
 	"village-mail.error.no_item": "No item to donate",
 	"village-mail.error.already_collected": "Items already collected",
 	"village-mail.error.no_items": "No items to collect",
+	"village-mail.error.pandorical_required": "Mail requires the Pandorical mod on your client.",
 
 	"village-mail.delivery.villager_gift": "A villager left something for you.",
 	"village-mail.delivery.villager_gift_body": "A small gift for you.",
@@ -73,6 +74,10 @@
 	"village-mail.delivery.gratitude": "Thank you for your generosity. The village will put your gift to good use.",
 	"village-mail.delivery.quest_offer": "I have a task that could use a capable hand, if you're willing.",
 	"village-mail.delivery.quest_offer_subject": "A Task for You",
+
+	"village-mail.return.sender": "Village Post Office",
+	"village-mail.return.rejected_body": "The village couldn't use this, so we've sent it back to you.",
+	"village-mail.return.overflow_body": "The village storeroom was full — %d of your building materials couldn't be taken in and were lost.",
 
 	"village-mail.api.new_mail_from": "You have mail from %s.",
 	"village-mail.api.new_mail": "You have mail.",

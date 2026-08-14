@@ -1,17 +1,17 @@
 package justfatlard.village_mail.integration;
 
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.entity.passive.VillagerEntity;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.registry.tag.ItemTags;
+import net.minecraft.world.entity.npc.villager.Villager;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.tags.ItemTags;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.network.chat.Component;
+import net.minecraft.ChatFormatting;
+import net.minecraft.core.BlockPos;
 
 import java.lang.reflect.Method;
 import java.util.List;
@@ -33,21 +33,20 @@ import org.slf4j.LoggerFactory;
  */
 public class VillageQuestsIntegration {
     private static final Logger LOGGER = LoggerFactory.getLogger("village-mail");
-    private static final String VILLAGE_QUESTS_MOD_ID = "village-quests";
+    private static final String VILLAGE_QUESTS_MOD_ID = "village-quests-justfatlard";
     private static boolean isLoaded = false;
 
 
-    // Track deep confession delivery — once per player per server session (resets on restart)
+    // Session-side dedup for the confession arc; VillagerMemory (if present) persists it across restarts
     private static final java.util.Set<UUID> DEEP_ARC_DELIVERED = java.util.concurrent.ConcurrentHashMap.newKeySet();
-    // Cached reflection references -- lazily initialized once
     private static boolean reflectionInitialized = false;
     private static boolean reflectionAvailable = false;
 
     // VillageQuestsAPI
-    private static Method cachedModifyReputationMethod;   // static: (ServerPlayerEntity, BlockPos, int, String) -> boolean
+    private static Method cachedModifyReputationMethod;   // static: (ServerPlayer, BlockPos, int, String) -> boolean
 
     // RecentActionsMemory
-    private static Method cachedRecordActionMethod;       // static: (ServerPlayerEntity, ActionType, BlockPos, String) -> void
+    private static Method cachedRecordActionMethod;       // static: (ServerPlayer, ActionType, BlockPos, String) -> void
     private static Object cachedGiftGivenAction;          // enum constant GIFT_GIVEN
 
     // QuestRegistry
@@ -63,7 +62,7 @@ public class VillageQuestsIntegration {
     // MailSystemIntegration (VQ side)
     private static Method cachedSendLetterFromVillagerMethod; // static: (MinecraftServer, UUID, String, String, String) -> void
 
-    // VillagerMemory (optional — for persistent tracking across restarts)
+    // VillagerMemory (optional: persistent tracking across restarts)
     private static Method cachedRecordMemoryMethod;   // static: (UUID, MemoryType) -> void
     private static Method cachedHasMemoryMethod;       // static: (UUID, MemoryType) -> boolean
     private static Object cachedSecretKeptEnum;        // MemoryType.SECRET_KEPT
@@ -80,13 +79,13 @@ public class VillageQuestsIntegration {
             // --- VillageQuestsAPI ---
             Class<?> apiClass = Class.forName("justfatlard.village_quests.api.VillageQuestsAPI");
             cachedModifyReputationMethod = apiClass.getMethod("modifyPlayerReputation",
-                ServerPlayerEntity.class, BlockPos.class, int.class, String.class);
+                ServerPlayer.class, BlockPos.class, int.class, String.class);
 
             // --- RecentActionsMemory ---
             Class<?> memoryClass = Class.forName("justfatlard.village_quests.manager.RecentActionsMemory");
             Class<?> actionTypeEnum = Class.forName("justfatlard.village_quests.manager.RecentActionsMemory$ActionType");
             cachedRecordActionMethod = memoryClass.getMethod("recordAction",
-                ServerPlayerEntity.class, actionTypeEnum, BlockPos.class, String.class);
+                ServerPlayer.class, actionTypeEnum, BlockPos.class, String.class);
             cachedGiftGivenAction = Enum.valueOf((Class<Enum>) actionTypeEnum, "GIFT_GIVEN");
 
             // --- QuestRegistry ---
@@ -113,7 +112,7 @@ public class VillageQuestsIntegration {
             LOGGER.error("Failed to initialize Village Quests reflection: {}", e.getMessage(), e);
         }
 
-        // VillagerMemory reflection (optional — persists deep confession across restarts)
+        // VillagerMemory reflection (optional: persists deep confession across restarts)
         try {
             @SuppressWarnings("unchecked")
             Class<?> villagerMemoryClass = Class.forName("justfatlard.village_quests.quest.VillagerMemory");
@@ -121,9 +120,9 @@ public class VillageQuestsIntegration {
             cachedRecordMemoryMethod = villagerMemoryClass.getMethod("recordMemory", UUID.class, memoryTypeEnum);
             cachedHasMemoryMethod = villagerMemoryClass.getMethod("hasMemory", UUID.class, memoryTypeEnum);
             cachedSecretKeptEnum = Enum.valueOf((Class<Enum>) memoryTypeEnum, "SECRET_KEPT");
-            LOGGER.debug("VillagerMemory reflection available — deep confession will persist across restarts");
+            LOGGER.debug("VillagerMemory reflection available; deep confession will persist across restarts");
         } catch (Exception e) {
-            LOGGER.debug("VillagerMemory not available — deep confession tracking is session-only");
+            LOGGER.debug("VillagerMemory not available; deep confession tracking is session-only");
         }
     }
 
@@ -170,13 +169,11 @@ public class VillageQuestsIntegration {
      * quest system without overriding VQ's built-in behaviour.
      */
     private static void registerMailQuests() throws Exception {
-        // Create a QuestGenerator proxy that always returns null
         Object questGenerator = java.lang.reflect.Proxy.newProxyInstance(
             cachedQuestGeneratorInterface.getClassLoader(),
             new Class<?>[] { cachedQuestGeneratorInterface },
             (proxy, method, args) -> {
                 if ("generate".equals(method.getName())) {
-                    // Returning null lets VQ's own generators handle mail person quests
                     return null;
                 }
                 return null;
@@ -188,7 +185,7 @@ public class VillageQuestsIntegration {
 
     /**
      * Register dialogue options for the mail_person profession using DialogueBuilder.
-     * Handlers receive (VillagerEntity, ServerPlayerEntity, String) via the
+     * Handlers receive (Villager, ServerPlayer, String) via the
      * DialogueHandler functional interface.
      */
     private static void registerMailDialogues() throws Exception {
@@ -197,52 +194,49 @@ public class VillageQuestsIntegration {
         // --- "Do you have any mail for me?" (any reputation) ---
         Object checkMailHandler = createDialogueHandler((villager, player, optionId) -> {
             int unreadCount = justfatlard.village_mail.api.MailApi.getUnreadCount(
-                player.getEntityWorld().getServer(), player.getUuid());
+                player.level().getServer(), player.getUUID());
             if (unreadCount > 0) {
-                return Text.translatable("village-mail.quest.check_mail.has_mail", unreadCount)
-                    .formatted(Formatting.GREEN);
+                return Component.translatable("village-mail.quest.check_mail.has_mail", unreadCount)
+                    .withStyle(ChatFormatting.GREEN);
             } else {
-                return Text.translatable("village-mail.quest.check_mail.no_mail")
-                    .formatted(Formatting.GRAY);
+                return Component.translatable("village-mail.quest.check_mail.no_mail")
+                    .withStyle(ChatFormatting.GRAY);
             }
         });
 
         // --- "I'd like to send a package" (reputation >= 10) ---
         Object sendPackageHandler = createDialogueHandler((villager, player, optionId) -> {
             if (player.getInventory().contains(new ItemStack(Items.PAPER))) {
-                return Text.translatable("village-mail.quest.send_package.has_paper")
-                    .formatted(Formatting.YELLOW);
+                return Component.translatable("village-mail.quest.send_package.has_paper")
+                    .withStyle(ChatFormatting.YELLOW);
             } else {
-                return Text.translatable("village-mail.quest.send_package.no_paper")
-                    .formatted(Formatting.RED);
+                return Component.translatable("village-mail.quest.send_package.no_paper")
+                    .withStyle(ChatFormatting.RED);
             }
         });
 
         // --- "How's the mail route today?" (reputation >= 25) ---
-        // Flavor text -- randomized chatter from the mail carrier.
-        // Kept as literals because these are randomized NPC personality lines,
-        // not UI chrome.  Dozens of translation keys for random banter would be
-        // excessive; the variety IS the feature.
+        // Literal strings by design: randomized NPC personality lines, not UI chrome.
+        // Translation keys per banter line would defeat the variety.
         Object mailRouteHandler = createDialogueHandler((villager, player, optionId) -> {
-            // Weather/time check first
-            if (villager.getEntityWorld() instanceof ServerWorld sw) {
-                long timeOfDay = sw.getTimeOfDay() % 24000;
-                if (sw.isThundering()) return Text.literal("Not going out in that. Letters can wait.").formatted(Formatting.YELLOW);
-                if (sw.isRaining()) return Text.literal("Wrapped everything in leather today. Still damp.").formatted(Formatting.WHITE);
-                if (timeOfDay >= 13000) return Text.literal("Last delivery was after dark. Don't recommend it.").formatted(Formatting.GRAY);
-                if (timeOfDay < 4000) return Text.literal("Good road today. Made all my stops before noon.").formatted(Formatting.WHITE);
+            if (villager.level() instanceof ServerLevel sw) {
+                long timeOfDay = sw.getGameTime() % 24000;
+                if (sw.isThundering()) return Component.literal("Not going out in that. Letters can wait.").withStyle(ChatFormatting.YELLOW);
+                if (sw.isRaining()) return Component.literal("Wrapped everything in leather today. Still damp.").withStyle(ChatFormatting.WHITE);
+                if (timeOfDay >= 13000) return Component.literal("Last delivery was after dark. Don't recommend it.").withStyle(ChatFormatting.GRAY);
+                if (timeOfDay < 4000) return Component.literal("Good road today. Made all my stops before noon.").withStyle(ChatFormatting.WHITE);
 
-                // Biome check — 40% chance
+                // Biome flavor, 40% chance
                 if (java.util.concurrent.ThreadLocalRandom.current().nextDouble() < 0.40) {
-                    String biomePath = sw.getBiome(villager.getBlockPos()).getKey()
-                        .map(k -> k.getValue().getPath()).orElse("");
-                    if (biomePath.contains("desert")) return Text.literal("Sand gets into the letters. I wrap them twice now.").formatted(Formatting.WHITE);
+                    String biomePath = sw.getBiome(villager.blockPosition()).unwrapKey()
+                        .map(k -> k.identifier().getPath()).orElse("");
+                    if (biomePath.contains("desert")) return Component.literal("Sand gets into the letters. I wrap them twice now.").withStyle(ChatFormatting.WHITE);
                     if (biomePath.contains("taiga") || biomePath.contains("snowy") || biomePath.contains("ice"))
-                        return Text.literal("The ink freezes on the road. I keep the letters inside my coat.").formatted(Formatting.WHITE);
+                        return Component.literal("The ink freezes on the road. I keep the letters inside my coat.").withStyle(ChatFormatting.WHITE);
                     if (biomePath.contains("jungle") || biomePath.contains("bamboo"))
-                        return Text.literal("The humidity curls the paper. Half the addresses are unreadable.").formatted(Formatting.WHITE);
+                        return Component.literal("The humidity curls the paper. Half the addresses are unreadable.").withStyle(ChatFormatting.WHITE);
                     if (biomePath.contains("swamp") || biomePath.contains("mangrove"))
-                        return Text.literal("Mud season. Lost a whole satchel in the bog last week.").formatted(Formatting.WHITE);
+                        return Component.literal("Mud season. Lost a whole satchel in the bog last week.").withStyle(ChatFormatting.WHITE);
                 }
             }
             String[] responses = {
@@ -254,12 +248,11 @@ public class VillageQuestsIntegration {
                 "Village to the east hasn't sent anything in days. Used to be regular.",
                 "Someone's been leaving bread by the road marker. Every morning. I don't ask."
             };
-            return Text.literal(responses[(int)(java.util.concurrent.ThreadLocalRandom.current().nextDouble() * responses.length)])
-                .formatted(Formatting.WHITE);
+            return Component.literal(responses[(int)(java.util.concurrent.ThreadLocalRandom.current().nextDouble() * responses.length)])
+                .withStyle(ChatFormatting.WHITE);
         });
 
         // --- "You ever get tired of carrying other people's words?" (reputation >= 50) ---
-        // Deeper dialogue -- the weight of carrying other people's words
         Object weightOfMailHandler = createDialogueHandler((villager, player, optionId) -> {
             String[] responses = {
                 "You carry a letter long enough, you start to feel what's inside. Even sealed.",
@@ -269,11 +262,11 @@ public class VillageQuestsIntegration {
                 "The worst ones are the ones that come back. Address doesn't exist anymore.",
                 "Sometimes I stand at a door and I know -- before I knock -- that the news is bad. The letter tells you, somehow."
             };
-            return Text.literal(responses[(int)(java.util.concurrent.ThreadLocalRandom.current().nextDouble() * responses.length)])
-                .formatted(Formatting.GRAY, Formatting.ITALIC);
+            return Component.literal(responses[(int)(java.util.concurrent.ThreadLocalRandom.current().nextDouble() * responses.length)])
+                .withStyle(ChatFormatting.GRAY).withStyle(ChatFormatting.ITALIC);
         });
 
-        // --- Route gossip (rep 10+) — the carrier shares what they've heard on the road ---
+        // --- Route gossip (rep 10+) ---
         Object routeGossipHandler = createDialogueHandler((villager, player, optionId) -> {
             String[] gossip = {
                 "The village to the east has been quiet. Too quiet, if you ask me.",
@@ -285,16 +278,16 @@ public class VillageQuestsIntegration {
                 "Someone left a lantern by the road. Still lit. Nobody claims it.",
                 "The bridge is holding but I wouldn't trust it with a cart.",
             };
-            return Text.literal(gossip[java.util.concurrent.ThreadLocalRandom.current().nextInt(gossip.length)])
-                .formatted(Formatting.GRAY, Formatting.ITALIC);
+            return Component.literal(gossip[java.util.concurrent.ThreadLocalRandom.current().nextInt(gossip.length)])
+                .withStyle(ChatFormatting.GRAY).withStyle(ChatFormatting.ITALIC);
         });
 
         // --- Deep confession arc (rep 75+, once per player, persists across restarts) ---
         Object deepConfessionHandler = createDialogueHandler((villager, player, optionId) -> {
-            UUID pid = player.getUuid();
-            UUID vid = villager.getUuid();
+            UUID pid = player.getUUID();
+            UUID vid = villager.getUUID();
 
-            // Check persistent memory first (survives restarts)
+            // Persistent memory outranks the session set: another session may have delivered it
             if (!DEEP_ARC_DELIVERED.contains(pid) && cachedHasMemoryMethod != null && cachedSecretKeptEnum != null) {
                 try {
                     boolean persisted = (boolean) cachedHasMemoryMethod.invoke(null, vid, cachedSecretKeptEnum);
@@ -303,34 +296,33 @@ public class VillageQuestsIntegration {
             }
 
             if (DEEP_ARC_DELIVERED.add(pid)) {
-                // First time — the confession. Persist it.
+                // First time: the confession. Persist it.
                 if (cachedRecordMemoryMethod != null && cachedSecretKeptEnum != null) {
                     try { cachedRecordMemoryMethod.invoke(null, vid, cachedSecretKeptEnum); } catch (Exception ignored) {}
                 }
-                return Text.literal("I read one. Once. Years ago. A love letter. Wasn't for me. I delivered it like nothing happened. But I remember every word.")
-                    .formatted(Formatting.GRAY, Formatting.ITALIC);
+                return Component.literal("I read one. Once. Years ago. A love letter. Wasn't for me. I delivered it like nothing happened. But I remember every word.")
+                    .withStyle(ChatFormatting.GRAY).withStyle(ChatFormatting.ITALIC);
             } else {
-                return Text.literal("I told you about the letter. I still think about it sometimes.")
-                    .formatted(Formatting.GRAY);
+                return Component.literal("I told you about the letter. I still think about it sometimes.")
+                    .withStyle(ChatFormatting.GRAY);
             }
         });
 
-        // Add options to builder and register
-        // Option labels are translatable — these are the player's words, not NPC voice
-        cachedBuilderAddOptionMethod.invoke(builder, "check_mail", Text.translatable("village-mail.dialogue.option.check_mail").getString(), 0, Integer.MAX_VALUE, checkMailHandler);
-        cachedBuilderAddOptionMethod.invoke(builder, "send_package", Text.translatable("village-mail.dialogue.option.send_package").getString(), 10, Integer.MAX_VALUE, sendPackageHandler);
-        cachedBuilderAddOptionMethod.invoke(builder, "route_gossip", Text.translatable("village-mail.dialogue.option.route_gossip").getString(), 10, Integer.MAX_VALUE, routeGossipHandler);
-        cachedBuilderAddOptionMethod.invoke(builder, "mail_route", Text.translatable("village-mail.dialogue.option.mail_route").getString(), 25, Integer.MAX_VALUE, mailRouteHandler);
-        cachedBuilderAddOptionMethod.invoke(builder, "weight_of_mail", Text.translatable("village-mail.dialogue.option.weight_of_mail").getString(), 50, Integer.MAX_VALUE, weightOfMailHandler);
+        // Option labels are translatable: the player's words, not NPC voice
+        cachedBuilderAddOptionMethod.invoke(builder, "check_mail", Component.translatable("village-mail.dialogue.option.check_mail").getString(), 0, Integer.MAX_VALUE, checkMailHandler);
+        cachedBuilderAddOptionMethod.invoke(builder, "send_package", Component.translatable("village-mail.dialogue.option.send_package").getString(), 10, Integer.MAX_VALUE, sendPackageHandler);
+        cachedBuilderAddOptionMethod.invoke(builder, "route_gossip", Component.translatable("village-mail.dialogue.option.route_gossip").getString(), 10, Integer.MAX_VALUE, routeGossipHandler);
+        cachedBuilderAddOptionMethod.invoke(builder, "mail_route", Component.translatable("village-mail.dialogue.option.mail_route").getString(), 25, Integer.MAX_VALUE, mailRouteHandler);
+        cachedBuilderAddOptionMethod.invoke(builder, "weight_of_mail", Component.translatable("village-mail.dialogue.option.weight_of_mail").getString(), 50, Integer.MAX_VALUE, weightOfMailHandler);
 
-        cachedBuilderAddOptionMethod.invoke(builder, "vm_deep_confession", Text.translatable("village-mail.dialogue.option.deep_confession").getString(), 75, Integer.MAX_VALUE, deepConfessionHandler);
+        cachedBuilderAddOptionMethod.invoke(builder, "vm_deep_confession", Component.translatable("village-mail.dialogue.option.deep_confession").getString(), 75, Integer.MAX_VALUE, deepConfessionHandler);
 
         cachedBuilderRegisterMethod.invoke(builder, "mail_person");
     }
 
     /**
      * Create a DialogueHandler proxy from a typed lambda.
-     * The DialogueHandler interface: Text handle(VillagerEntity, ServerPlayerEntity, String)
+     * The DialogueHandler interface: Component handle(Villager, ServerPlayer, String)
      */
     private static Object createDialogueHandler(DialogueHandlerImpl handler) {
         return java.lang.reflect.Proxy.newProxyInstance(
@@ -339,8 +331,8 @@ public class VillageQuestsIntegration {
             (proxy, method, args) -> {
                 if ("handle".equals(method.getName())) {
                     return handler.handle(
-                        (VillagerEntity) args[0],
-                        (ServerPlayerEntity) args[1],
+                        (Villager) args[0],
+                        (ServerPlayer) args[1],
                         (String) args[2]
                     );
                 }
@@ -350,12 +342,11 @@ public class VillageQuestsIntegration {
     }
 
     /**
-     * Typed handler interface matching DialogueRegistry.DialogueHandler's signature.
-     * Avoids raw Object casts inside handler lambdas.
+     * Typed mirror of DialogueRegistry.DialogueHandler's signature.
      */
     @FunctionalInterface
     private interface DialogueHandlerImpl {
-        Text handle(VillagerEntity villager, ServerPlayerEntity player, String optionId);
+        Component handle(Villager villager, ServerPlayer player, String optionId);
     }
 
     // ========================================================================
@@ -363,14 +354,10 @@ public class VillageQuestsIntegration {
     // ========================================================================
 
     /**
-     * Process reputation increase for a village donation.
-     * More rare/valuable items give more reputation.
-     *
-     * Uses VillageQuestsAPI.modifyPlayerReputation() which handles village-level
-     * reputation -- no need to iterate nearby villagers.
+     * Process reputation increase for a village donation; rarer items give more.
      */
-    public static void processDonationReputation(ServerWorld world, BlockPos donationPos,
-                                                 ServerPlayerEntity donor, List<ItemStack> donatedItems) {
+    public static void processDonationReputation(ServerLevel world, BlockPos donationPos,
+                                                 ServerPlayer donor, List<ItemStack> donatedItems) {
         if (!isVillageQuestsLoaded() || donatedItems.isEmpty()) {
             return;
         }
@@ -381,7 +368,6 @@ public class VillageQuestsIntegration {
         }
 
         try {
-            // Calculate total reputation based on item value/rarity
             int totalReputation = 0;
             int foodCount = 0;
             int rareCount = 0;
@@ -393,70 +379,61 @@ public class VillageQuestsIntegration {
                 int count = stack.getCount();
                 Item item = stack.getItem();
 
-                // Calculate reputation based on item type and rarity
-                if (stack.contains(net.minecraft.component.DataComponentTypes.FOOD)) {
+                if (stack.has(net.minecraft.core.component.DataComponents.FOOD)) {
                     foodCount += count;
-                    totalReputation += count * 1; // 1 rep per food item
+                    totalReputation += count * 1;
                 }
-                // Rare/valuable items
                 else if (item == Items.DIAMOND || item == Items.EMERALD) {
                     rareCount += count;
-                    totalReputation += count * 10; // 10 rep per diamond/emerald
+                    totalReputation += count * 10;
                 }
                 else if (item == Items.GOLD_INGOT || item == Items.IRON_INGOT) {
                     rareCount += count;
-                    totalReputation += count * 5; // 5 rep per gold/iron
+                    totalReputation += count * 5;
                 }
                 else if (item == Items.NETHERITE_INGOT) {
                     rareCount += count;
-                    totalReputation += count * 20; // 20 rep per netherite!
+                    totalReputation += count * 20;
                 }
                 else if (item == Items.ENCHANTED_BOOK || item == Items.TOTEM_OF_UNDYING) {
                     rareCount += count;
-                    totalReputation += count * 15; // 15 rep for enchanted/special
+                    totalReputation += count * 15;
                 }
-                // Building materials
-                else if (stack.isIn(ItemTags.LOGS) || stack.isIn(ItemTags.PLANKS) ||
-                         stack.isIn(ItemTags.STONE_TOOL_MATERIALS) || item == Items.COBBLESTONE) {
+                else if (stack.getItem().builtInRegistryHolder().is(ItemTags.LOGS) || stack.getItem().builtInRegistryHolder().is(ItemTags.PLANKS) ||
+                         stack.getItem().builtInRegistryHolder().is(ItemTags.STONE_TOOL_MATERIALS) || item == Items.COBBLESTONE) {
                     buildingMaterialCount += count;
-                    totalReputation += count * 2; // 2 rep per building block
+                    totalReputation += count * 2;
                 }
-                // Tools and equipment
-                else if (stack.contains(net.minecraft.component.DataComponentTypes.TOOL) || item == Items.IRON_PICKAXE ||
+                else if (stack.has(net.minecraft.core.component.DataComponents.TOOL) || item == Items.IRON_PICKAXE ||
                          item == Items.IRON_AXE || item == Items.IRON_SHOVEL) {
-                    totalReputation += 8; // 8 rep per tool
+                    totalReputation += 8;
                 }
-                // Everything else
                 else {
-                    totalReputation += count * 1; // 1 rep per misc item
+                    totalReputation += count * 1;
                 }
             }
 
             if (totalReputation > 0) {
-                // Cap at 50 reputation per donation to prevent exploits
+                // Cap per donation to prevent reputation farming
                 totalReputation = Math.min(totalReputation, 50);
 
-                // Use VillageQuestsAPI facade -- it handles village-level reputation
                 cachedModifyReputationMethod.invoke(null, donor, donationPos, totalReputation, "donation");
 
-                // Record this as a good deed in RecentActionsMemory
                 String details = String.format("Donated %d items to the village", donatedItems.size());
                 cachedRecordActionMethod.invoke(null, donor, cachedGiftGivenAction, donationPos, details);
 
-                // Send feedback to player
                 if (rareCount > 0) {
-                    donor.sendMessage(
-                        Text.translatable("village-mail.quest.donation.rare")
-                            .formatted(Formatting.GREEN),
+                    donor.sendSystemMessage(
+                        Component.translatable("village-mail.quest.donation.rare")
+                            .withStyle(ChatFormatting.GREEN),
                         false);
                 } else {
-                    donor.sendMessage(
-                        Text.translatable("village-mail.quest.donation.normal")
-                            .formatted(Formatting.GREEN),
+                    donor.sendSystemMessage(
+                        Component.translatable("village-mail.quest.donation.normal")
+                            .withStyle(ChatFormatting.GREEN),
                         false);
                 }
 
-                // Log for debugging
                 LOGGER.info("{} donated {} items, earned {} reputation",
                     donor.getName().getString(), donatedItems.size(), totalReputation);
             }
@@ -504,29 +481,26 @@ public class VillageQuestsIntegration {
     }
 
     // ========================================================================
-    // Mail delivery backbone — VQ calls this via reflection to route
-    // aftermath letters, regret letters, quest chain bloom mail, etc.
-    // through the actual postal system instead of chat messages.
+    // Mail delivery backbone
     // ========================================================================
 
     /**
-     * Public entry point for village-quests to send mail through the postal system.
-     * VQ calls this via reflection when village-mail is installed.
+     * Entry point for village-quests to route its letters through the postal system.
+     * VQ invokes this via reflection, so it has no in-repo callers; do not delete.
      *
      * @param player       the recipient
      * @param villagerName who the letter is from
      * @param message      the letter body
      */
-    public static void sendMailFromVillager(ServerPlayerEntity player, String villagerName, String message) {
+    public static void sendMailFromVillager(ServerPlayer player, String villagerName, String message) {
         if (player == null || message == null) return;
         try {
-            MinecraftServer server = player.getEntityWorld().getServer();
+            MinecraftServer server = player.level().getServer();
             if (server != null) {
-                justfatlard.village_mail.api.MailApi.sendMessage(server, player.getUuid(), villagerName, message);
+                justfatlard.village_mail.api.MailApi.sendMessage(server, player.getUUID(), villagerName, message);
             }
         } catch (Exception e) {
-            // Fallback: send as chat if mail system fails
-            player.sendMessage(Text.literal(message).formatted(Formatting.GRAY, Formatting.ITALIC), false);
+            player.sendSystemMessage(Component.literal(message).withStyle(ChatFormatting.GRAY).withStyle(ChatFormatting.ITALIC), false);
         }
     }
 }

@@ -3,11 +3,12 @@ package justfatlard.village_mail.api;
 import justfatlard.village_mail.mail.MailMessage;
 import justfatlard.village_mail.mail.MessageButton;
 import justfatlard.village_mail.mail.PlayerMailStorage;
-import net.minecraft.item.ItemStack;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.text.Text;
-import net.minecraft.util.Identifier;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
+import net.minecraft.ChatFormatting;
 
 import java.util.List;
 import java.util.UUID;
@@ -29,22 +30,22 @@ import org.slf4j.LoggerFactory;
  *     "Here's your reward!", new ItemStack(Items.DIAMOND, 5));
  *
  * // Send a message with custom buttons
- * MailApi.registerButtonHandler(Identifier.of("mymod", "accept_quest"),
+ * MailApi.registerButtonHandler(Identifier.fromNamespaceAndPath("mymod", "accept_quest"),
  *     (server, player, message, button) -> {
  *         // Handle button click
  *         return true; // true = delete message after handling
  *     });
  *
- * MailApi.sendModMessage(server, Identifier.of("mymod", "quest"), "Quest System",
+ * MailApi.sendModMessage(server, Identifier.fromNamespaceAndPath("mymod", "quest"), "Quest System",
  *     recipientUuid, "Do you accept this quest?", ItemStack.EMPTY,
  *     List.of(
- *         MessageButton.accept(Identifier.of("mymod", "accept_quest"), customData),
- *         MessageButton.decline(Identifier.of("mymod", "decline_quest"), customData)
+ *         MessageButton.accept(Identifier.fromNamespaceAndPath("mymod", "accept_quest"), customData),
+ *         MessageButton.decline(Identifier.fromNamespaceAndPath("mymod", "decline_quest"), customData)
  *     ));
  * }</pre>
  */
 public final class MailApi {
-	private MailApi() {} // Static-only class
+	private MailApi() {}
 
 	private static final Logger LOGGER = LoggerFactory.getLogger("village-mail");
 
@@ -239,21 +240,12 @@ public final class MailApi {
 	}
 
 	/**
-	 * <b>Internal use only -- do not call directly.</b>
+	 * <b>Internal use only.</b> Called by the network handler on button click;
+	 * mods register via {@link #registerButtonHandler(Identifier, ButtonHandler)}.
 	 *
-	 * <p>This method is invoked by the network handler when a player clicks a button in
-	 * the mail UI. It is part of the internal wiring between the network layer and the
-	 * button handler registry. External mods should use
-	 * {@link #registerButtonHandler(Identifier, ButtonHandler)} to register handlers
-	 * instead of calling this method.</p>
-	 *
-	 * @param server The server instance
-	 * @param player The player who clicked the button
-	 * @param message The message containing the button
-	 * @param button The button that was clicked
 	 * @return true if the button was handled successfully
 	 */
-	public static boolean handleButton(MinecraftServer server, ServerPlayerEntity player,
+	public static boolean handleButton(MinecraftServer server, ServerPlayer player,
 			MailMessage message, MessageButton button) {
 		Identifier handlerId = button.getHandler();
 		if (handlerId == null) {
@@ -263,10 +255,9 @@ public final class MailApi {
 		if (!MailApiImpl.hasHandler(handlerId)) {
 			return false;
 		}
-		// Delegate to Impl which has proper try-catch around handler invocation
 		boolean shouldDelete = MailApiImpl.invokeButtonHandler(handlerId, server, player, message, button);
 		if (shouldDelete) {
-			PlayerMailStorage.get(server).deleteMessage(player.getUuid(), message.getId());
+			PlayerMailStorage.get(server).deleteMessage(player.getUUID(), message.getId());
 		}
 		return true;
 	}
@@ -285,7 +276,7 @@ public final class MailApi {
 		 * @param button The button that was clicked
 		 * @return true if the message should be deleted after handling, false to keep it
 		 */
-		boolean handle(MinecraftServer server, ServerPlayerEntity player, MailMessage message, MessageButton button);
+		boolean handle(MinecraftServer server, ServerPlayer player, MailMessage message, MessageButton button);
 	}
 
 	// ========== EVENTS ==========
@@ -343,23 +334,22 @@ public final class MailApi {
 	// ========== HELPERS ==========
 
 	private static void notifyPlayerIfOnline(MinecraftServer server, UUID recipientUuid, String senderName) {
-		ServerPlayerEntity player = server.getPlayerManager().getPlayer(recipientUuid);
+		ServerPlayer player = server.getPlayerList().getPlayer(recipientUuid);
 		if (player != null) {
 			if (senderName != null) {
-				player.sendMessage(
-					Text.translatable("village-mail.api.new_mail_from", senderName)
-						.formatted(net.minecraft.util.Formatting.YELLOW),
+				player.sendSystemMessage(
+					Component.translatable("village-mail.api.new_mail_from", senderName)
+						.withStyle(ChatFormatting.YELLOW),
 					true
 				);
 			} else {
-				player.sendMessage(
-					Text.translatable("village-mail.api.new_mail")
-						.formatted(net.minecraft.util.Formatting.YELLOW),
+				player.sendSystemMessage(
+					Component.translatable("village-mail.api.new_mail")
+						.withStyle(ChatFormatting.YELLOW),
 					true
 				);
 			}
-			// Push updated unread count to HUD badge
-			justfatlard.village_mail.network.MailNetworking.sendUnreadCount(player);
+			justfatlard.village_mail.pandorical.MailHud.updateUnreadCount(player);
 		}
 	}
 }

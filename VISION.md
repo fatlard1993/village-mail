@@ -1,4 +1,4 @@
-# Village Mail — Vision
+# Village Mail: Vision
 
 A postal system for Minecraft that feels like it was always there.
 
@@ -10,9 +10,9 @@ A postal system for Minecraft that feels like it was always there.
 
 ## The Experience
 
-You find a village. There's a post office with a public mailbox. A mail person villager offers to sell you a mailbox for 5 emeralds and will buy your paper. You place your mailbox near the village. Every few minutes, the mail person visits — sometimes with a small gift, sometimes just making rounds. You walk to the public mailbox, write a letter to a friend, attach a diamond, send it. They open their mailbox and find it waiting.
+You find a village. There's a post office with a public mailbox. A mail person villager offers to sell you a mailbox for 5 emeralds and will buy your paper. You place your mailbox near the village. Every few minutes, the mail person visits, sometimes with a small gift, sometimes just making rounds. You walk to the public mailbox, write a letter to a friend, attach a diamond, send it. They open their mailbox and find it waiting.
 
-One morning a letter arrives from the village elder, asking for help with a problem nearby. Another day, donated materials go toward a new building in the village square. These moments come from other mods — Village Quests, Village Builder — but they arrive through the same mailbox. The mod stands alone. The integrations deepen it.
+One morning a letter arrives from the village elder, asking for help with a problem nearby. Another day, donated materials go toward a new building in the village square. These moments come from other mods (Village Quests, Village Builder) but they arrive through the same mailbox. The mod stands alone. The integrations deepen it.
 
 ## Done
 
@@ -43,5 +43,6 @@ These are ordered. When two conflict, the higher one wins.
 
 ## Constraints
 
-- Fabric 1.21.11. Java 21.
+- Targets the Minecraft, Fabric Loader, and Java versions declared in this mod's `gradle.properties` and `fabric.mod.json`.
 - Small SMP is the target audience.
+- All UI is driven through Pandorical. Pandorical is a required client-side dependency for actually using the mail system; there is no vanilla-client fallback beyond a chat message telling the player it's required.

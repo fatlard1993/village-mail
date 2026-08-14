@@ -83,17 +83,23 @@ def block(x, y, z, state, nbt_children=None):
     return children
 
 
-def jigsaw_block(x, y, z, state):
-    """Jigsaw block with NBT for village integration."""
+def entrance_jigsaw_block(x, y, z, state, pool, final_state):
+    """Street-connection jigsaw, vanilla houses-pool convention.
+
+    Verified against the 26.3-snapshot-8 vanilla village templates: street
+    pieces select houses via jigsaws whose target is
+    minecraft:building_entrance, matched against the house jigsaw's NAME.
+    So the house jigsaw must be named minecraft:building_entrance, with
+    joint aligned, oriented out the door face, placed in the foundation at
+    the doorway, and its pool pointing back at the biome's streets pool.
+    """
     nbt = [
         (8, 'id', 'minecraft:jigsaw'),
-        (8, 'final_state', 'minecraft:air'),
-        (8, 'joint', 'rollable'),
-        (8, 'name', 'village-mail:bottom'),
-        (8, 'pool', 'minecraft:empty'),
-        (8, 'target', 'minecraft:bottom'),
-        (3, 'selection_priority', 0),
-        (3, 'placement_priority', 0),
+        (8, 'name', 'minecraft:building_entrance'),
+        (8, 'target', 'minecraft:building_entrance'),
+        (8, 'pool', pool),
+        (8, 'joint', 'aligned'),
+        (8, 'final_state', final_state),
     ]
     return block(x, y, z, state, nbt)
 
@@ -138,12 +144,20 @@ class StructureBuilder:
             self.palette.append(palette_entry(name, **(props or {})))
         return self.palette_idx[key]
 
-    def put(self, x, y, z, name, props=None, jigsaw=False):
+    def put(self, x, y, z, name, props=None):
         state = self._get_state(name, props)
-        if jigsaw:
-            self.blocks.append(jigsaw_block(x, y, z, state))
-        else:
-            self.blocks.append(block(x, y, z, state))
+        self.blocks.append(block(x, y, z, state))
+        self._grow(x, y, z)
+
+    def put_entrance_jigsaw(self, x, y, z, biome, final_state):
+        """Street-connection jigsaw at the doorway. Faces north (out of the
+        z=0 face, which is where every post office's door is)."""
+        state = self._get_state('minecraft:jigsaw', {'orientation': 'north_up'})
+        pool = 'minecraft:village/' + biome + '/streets'
+        self.blocks.append(entrance_jigsaw_block(x, y, z, state, pool, final_state))
+        self._grow(x, y, z)
+
+    def _grow(self, x, y, z):
         self.max[0] = max(self.max[0], x + 1)
         self.max[1] = max(self.max[1], y + 1)
         self.max[2] = max(self.max[2], z + 1)
@@ -207,8 +221,11 @@ def build_plains():
     b = StructureBuilder()
     W, D = 9, 9  # width (x), depth (z)
 
-    # y=0: cobblestone foundation pad
-    b.fill(0, 0, 0, W-1, 0, D-1, 'minecraft:cobblestone')
+    # y=0: cobblestone foundation pad (entrance jigsaw replaces the doorway block)
+    for x in range(W):
+        for z in range(D):
+            if (x, z) != (W//2, 0):
+                b.put(x, 0, z, 'minecraft:cobblestone')
 
     # y=1: floor — cobblestone border, oak planks inside
     for x in range(W):
@@ -289,8 +306,8 @@ def build_plains():
         for z in range(1, D-1):
             b.put(x, 6, z, 'minecraft:oak_slab', {'type': 'top'})
 
-    # Jigsaw for village integration
-    b.put(W//2, 0, D//2, 'minecraft:jigsaw', {'orientation': 'down_north'}, jigsaw=True)
+    # Street-connection jigsaw in the foundation at the doorway
+    b.put_entrance_jigsaw(W//2, 0, 0, 'plains', 'minecraft:cobblestone')
 
     b.save('src/main/resources/data/village-mail/structure/post_office_plains.nbt')
 
@@ -305,8 +322,11 @@ def build_desert():
     b = StructureBuilder()
     W, D = 9, 9
 
-    # y=0: sandstone foundation
-    b.fill(0, 0, 0, W-1, 0, D-1, 'minecraft:sandstone')
+    # y=0: sandstone foundation (entrance jigsaw replaces the doorway block)
+    for x in range(W):
+        for z in range(D):
+            if (x, z) != (W//2, 0):
+                b.put(x, 0, z, 'minecraft:sandstone')
 
     # y=1: floor — cut sandstone border, smooth sandstone interior
     for x in range(W):
@@ -362,7 +382,7 @@ def build_desert():
         b.put(0, 5, z, 'minecraft:cut_sandstone')
         b.put(W-1, 5, z, 'minecraft:cut_sandstone')
 
-    b.put(W//2, 0, D//2, 'minecraft:jigsaw', {'orientation': 'down_north'}, jigsaw=True)
+    b.put_entrance_jigsaw(W//2, 0, 0, 'desert', 'minecraft:sandstone')
     b.save('src/main/resources/data/village-mail/structure/post_office_desert.nbt')
 
 
@@ -376,8 +396,12 @@ def build_savanna():
     b = StructureBuilder()
     W, D = 9, 9
 
-    # y=0: cobblestone foundation (savanna uses cobblestone base like plains)
-    b.fill(0, 0, 0, W-1, 0, D-1, 'minecraft:cobblestone')
+    # y=0: cobblestone foundation (savanna uses cobblestone base like plains;
+    # entrance jigsaw replaces the doorway block)
+    for x in range(W):
+        for z in range(D):
+            if (x, z) != (W//2, 0):
+                b.put(x, 0, z, 'minecraft:cobblestone')
 
     # y=1: acacia plank floor
     for x in range(W):
@@ -446,7 +470,7 @@ def build_savanna():
         for z in range(1, D-1):
             b.put(x, 6, z, 'minecraft:acacia_slab', {'type': 'top'})
 
-    b.put(W//2, 0, D//2, 'minecraft:jigsaw', {'orientation': 'down_north'}, jigsaw=True)
+    b.put_entrance_jigsaw(W//2, 0, 0, 'savanna', 'minecraft:cobblestone')
     b.save('src/main/resources/data/village-mail/structure/post_office_savanna.nbt')
 
 
@@ -460,8 +484,12 @@ def build_snowy():
     b = StructureBuilder()
     W, D = 9, 9
 
-    # y=0: cobblestone foundation (under the snow)
-    b.fill(0, 0, 0, W-1, 0, D-1, 'minecraft:cobblestone')
+    # y=0: cobblestone foundation (under the snow;
+    # entrance jigsaw replaces the doorway block)
+    for x in range(W):
+        for z in range(D):
+            if (x, z) != (W//2, 0):
+                b.put(x, 0, z, 'minecraft:cobblestone')
 
     # y=1: floor — packed ice border, spruce planks inside
     for x in range(W):
@@ -535,7 +563,7 @@ def build_snowy():
         for z in range(1, D-1):
             b.put(x, 7, z, 'minecraft:snow', {'layers': '3'})
 
-    b.put(W//2, 0, D//2, 'minecraft:jigsaw', {'orientation': 'down_north'}, jigsaw=True)
+    b.put_entrance_jigsaw(W//2, 0, 0, 'snowy', 'minecraft:cobblestone')
     b.save('src/main/resources/data/village-mail/structure/post_office_snowy.nbt')
 
 
@@ -550,9 +578,12 @@ def build_taiga():
     b = StructureBuilder()
     W, D = 9, 9
 
-    # y=0: cobblestone + mossy cobblestone foundation (overgrown feel)
+    # y=0: cobblestone + mossy cobblestone foundation (overgrown feel;
+    # entrance jigsaw replaces the doorway block, which the pattern makes plain cobble)
     for x in range(W):
         for z in range(D):
+            if (x, z) == (W//2, 0):
+                continue
             if (x + z) % 3 == 0:
                 b.put(x, 0, z, 'minecraft:mossy_cobblestone')
             else:
@@ -640,7 +671,7 @@ def build_taiga():
         for z in range(1, D-1):
             b.put(x, 6, z, 'minecraft:spruce_slab', {'type': 'top'})
 
-    b.put(W//2, 0, D//2, 'minecraft:jigsaw', {'orientation': 'down_north'}, jigsaw=True)
+    b.put_entrance_jigsaw(W//2, 0, 0, 'taiga', 'minecraft:cobblestone')
     b.save('src/main/resources/data/village-mail/structure/post_office_taiga.nbt')
 
 

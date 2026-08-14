@@ -1,18 +1,29 @@
 package justfatlard.village_mail.mail;
 
-import net.minecraft.entity.damage.DamageSource;
-import net.minecraft.entity.damage.DamageTypes;
-import net.minecraft.entity.passive.VillagerEntity;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.registry.Registries;
+import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.damagesource.DamageTypes;
+import net.minecraft.world.entity.npc.villager.Villager;
+import net.minecraft.world.level.entity.EntityTypeTest;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.text.Text;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
-import net.minecraft.village.VillagerProfession;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.network.chat.Component;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.entity.npc.villager.VillagerProfession;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.tags.ItemTags;
+import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.ChatFormatting;
+import net.minecraft.world.entity.monster.zombie.Zombie;
+import net.minecraft.world.entity.monster.Ravager;
+import net.minecraft.world.entity.monster.illager.Pillager;
+import net.minecraft.world.entity.monster.illager.Vindicator;
+import net.minecraft.world.entity.monster.illager.Evoker;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -40,7 +51,6 @@ public class MailDeliveryManager {
 	private record ActiveDelivery(UUID villagerUuid, BlockPos targetMailbox, UUID mailboxOwner, long startTick) {}
 	private final List<DelayedTask> delayedTasks = new ArrayList<>();
 
-	// Tick interval for villager mail (about every 5 minutes)
 	private static final int VILLAGER_MAIL_INTERVAL = 6000; // 5 minutes in ticks
 
 	/**
@@ -52,13 +62,13 @@ public class MailDeliveryManager {
 	 * Schedule a task to run after a delay in ticks.
 	 */
 	public void scheduleDelayed(MinecraftServer server, int delayTicks, Runnable action) {
-		long executeAt = server.getTicks() + delayTicks;
+		long executeAt = server.getTickCount() + delayTicks;
 		delayedTasks.add(new DelayedTask(executeAt, action));
 	}
 
 	private void processDelayedTasks(MinecraftServer server) {
 		if (delayedTasks.isEmpty()) return;
-		long currentTick = server.getTicks();
+		long currentTick = server.getTickCount();
 		Iterator<DelayedTask> it = delayedTasks.iterator();
 		while (it.hasNext()) {
 			DelayedTask task = it.next();
@@ -79,10 +89,10 @@ public class MailDeliveryManager {
 		public final UUID senderUuid;
 		public final String senderName;
 		public final BlockPos sourcePos;
-		public final ServerWorld world;
+		public final ServerLevel world;
 
 		public DonationSubmission(List<ItemStack> items, UUID senderUuid, String senderName,
-								  BlockPos sourcePos, ServerWorld world) {
+								  BlockPos sourcePos, ServerLevel world) {
 			this.items = items;
 			this.senderUuid = senderUuid;
 			this.senderName = senderName;
@@ -95,7 +105,7 @@ public class MailDeliveryManager {
 	 * Submit a village donation from a player.
 	 */
 	public void submitDonation(List<ItemStack> items, UUID senderUuid, String senderName,
-							   BlockPos sourcePos, ServerWorld world) {
+							   BlockPos sourcePos, ServerLevel world) {
 		if (items.isEmpty()) return;
 		pendingDonations.add(new DonationSubmission(
 			items, senderUuid, senderName,
@@ -114,20 +124,15 @@ public class MailDeliveryManager {
 		lastObituaryTime.clear();
 	}
 
-	// Called every server tick
 	public void tick(MinecraftServer server) {
-		// Auto-save mail storage periodically
 		PlayerMailStorage storage = PlayerMailStorage.get(server);
 		storage.tick();
 
-		// Process pending donations
 		processPendingDonations(server);
 
-		// Process delayed tasks (gratitude mail, etc.)
 		processDelayedTasks(server);
 
-		// Periodically send villager mail
-		if (server.getTicks() % 100 == 0) { // Check every 5 seconds
+		if (server.getTickCount() % 100 == 0) { // Check every 5 seconds
 			processVillagerMail(server);
 		}
 
@@ -147,15 +152,23 @@ public class MailDeliveryManager {
 	}
 
 	private void deliverToVillage(DonationSubmission mail) {
-		// First, try to process through Village Builder if it's installed
-		// This will siphon off any materials needed for construction
-		List<ItemStack> remainingItems = VillageBuilderIntegration.processDonation(
+		// Village Builder takes construction materials first; the rest comes back to us.
+		VillageBuilderIntegration.DonationOutcome outcome = VillageBuilderIntegration.processDonation(
 			mail.world, mail.sourcePos, mail.items
 		);
 
-		// Process reputation increases for Village Quests if installed
+		// Items the village won't accept (e.g. a mis-mailed sword) are our responsibility:
+		// return them to the sender so nothing is silently discarded.
+		returnRejectedItemsToSender(mail, outcome.rejected());
+
+		// Building materials that didn't fit the village's inventory are destroyed by
+		// Village Builder's API path (only a count survives). Tell the sender they were lost.
+		if (outcome.overflowLost() > 0) {
+			notifyOverflowLost(mail, outcome.overflowLost());
+		}
+
 		if (mail.senderUuid != null) {
-			ServerPlayerEntity sender = mail.world.getServer().getPlayerManager().getPlayer(mail.senderUuid);
+			ServerPlayer sender = mail.world.getServer().getPlayerList().getPlayer(mail.senderUuid);
 			if (sender != null) {
 				// Pass all donated items for reputation calculation (not just remaining)
 				VillageQuestsIntegration.processDonationReputation(
@@ -164,59 +177,55 @@ public class MailDeliveryManager {
 			}
 		}
 
-		// Find nearby villagers
-		Box searchBox = new Box(mail.sourcePos).expand(32);
-		List<VillagerEntity> villagers = mail.world.getEntitiesByClass(
-			VillagerEntity.class, searchBox, v -> true
+		AABB searchBox = new AABB(mail.sourcePos).inflate(32);
+		List<Villager> villagers = mail.world.getEntities(
+				EntityTypeTest.forClass(Villager.class), searchBox, v -> true
 		);
 
 		if (!villagers.isEmpty()) {
-			// Track what was donated
 			int totalFoodCount = 0;
 			int buildingMaterialCount = 0;
 			int otherCount = 0;
 
 			// Count all donated items (not just remaining)
 			for (ItemStack item : mail.items) {
-				if (item.contains(net.minecraft.component.DataComponentTypes.FOOD)) {
+				if (item.has(DataComponents.FOOD)) {
 					totalFoodCount += item.getCount();
-				} else if (item.isIn(net.minecraft.registry.tag.ItemTags.LOGS) ||
-						   item.isIn(net.minecraft.registry.tag.ItemTags.PLANKS)) {
+				} else if (item.getItem().builtInRegistryHolder().is(ItemTags.LOGS) ||
+						   item.getItem().builtInRegistryHolder().is(ItemTags.PLANKS)) {
 					buildingMaterialCount += item.getCount();
 				} else {
 					otherCount += item.getCount();
 				}
 			}
 
-			// Distribute food to villagers to enable breeding
 			if (totalFoodCount > 0) {
 				distributeFood(villagers, totalFoodCount, mail.world);
 			}
 
-			// Notify nearby players about the donation
-			Text donationText;
+			Component donationText;
 			if (totalFoodCount > 0 && (buildingMaterialCount > 0 || otherCount > 0)) {
-				donationText = Text.translatable("village-mail.delivery.donation_received_mixed",
+				donationText = Component.translatable("village-mail.delivery.donation_received_mixed",
 					totalFoodCount, buildingMaterialCount, otherCount);
 			} else if (totalFoodCount > 0) {
-				donationText = Text.translatable("village-mail.delivery.donation_received_food", totalFoodCount);
+				donationText = Component.translatable("village-mail.delivery.donation_received_food", totalFoodCount);
 			} else if (buildingMaterialCount > 0) {
-				donationText = Text.translatable("village-mail.delivery.donation_received_building", buildingMaterialCount);
+				donationText = Component.translatable("village-mail.delivery.donation_received_building", buildingMaterialCount);
 			} else {
-				donationText = Text.translatable("village-mail.delivery.donation_received_other", otherCount);
+				donationText = Component.translatable("village-mail.delivery.donation_received_other", otherCount);
 			}
 
-			final Text finalDonationText = donationText;
-			mail.world.getPlayers().forEach(player -> {
-				if (player.getBlockPos().isWithinDistance(mail.sourcePos, 64)) {
-					player.sendMessage(finalDonationText.copy().formatted(net.minecraft.util.Formatting.GREEN), true);
+			final Component finalDonationText = donationText;
+			mail.world.players().forEach(player -> {
+				if (player.blockPosition().closerThan(mail.sourcePos, 64)) {
+					player.sendSystemMessage(finalDonationText.copy().withStyle(ChatFormatting.GREEN), true);
 
 					// Construction status in chat so it doesn't overwrite the actionbar donation text
-					Text constructionStatus = VillageBuilderIntegration.getConstructionStatus(
+					Component constructionStatus = VillageBuilderIntegration.getConstructionStatus(
 						mail.world, mail.sourcePos
 					);
 					if (constructionStatus != null) {
-						player.sendMessage(constructionStatus, false);
+						player.sendSystemMessage(constructionStatus, false);
 					}
 				}
 			});
@@ -227,34 +236,90 @@ public class MailDeliveryManager {
 	}
 
 	/**
+	 * Return items the village rejected (non-building materials) to the sender so
+	 * nothing is silently discarded. Each rejected stack becomes its own mail message
+	 * with a collect-items button (mail supports one attachment per message). If the
+	 * donation had no identifiable sender, the items are dropped at the donation
+	 * location instead of vanishing.
+	 */
+	private void returnRejectedItemsToSender(DonationSubmission mail, List<ItemStack> rejectedItems) {
+		if (rejectedItems == null || rejectedItems.isEmpty()) return;
+
+		MinecraftServer server = mail.world.getServer();
+
+		if (mail.senderUuid == null || server == null) {
+			for (ItemStack stack : rejectedItems) {
+				if (stack != null && !stack.isEmpty()) {
+					Block.popResource(mail.world, mail.sourcePos, stack.copy());
+				}
+			}
+			LOGGER.info("Dropped {} rejected donation item stack(s) at {} (no sender to return to)",
+				rejectedItems.size(), mail.sourcePos);
+			return;
+		}
+
+		String senderName = Component.translatable("village-mail.return.sender").getString();
+		String body = Component.translatable("village-mail.return.rejected_body").getString();
+		int returned = 0;
+		for (ItemStack stack : rejectedItems) {
+			if (stack == null || stack.isEmpty()) continue;
+			justfatlard.village_mail.api.MailApi.sendMessageWithItems(
+				server, mail.senderUuid, senderName, body, stack.copy()
+			);
+			returned++;
+		}
+		if (returned > 0) {
+			LOGGER.info("Returned {} rejected donation item stack(s) to sender {}", returned, mail.senderName);
+		}
+	}
+
+	/**
+	 * Tell the sender that some of their donated building materials didn't fit the
+	 * village inventory and were lost. Village Builder's API path destroys overflow
+	 * items (only a count survives), so we can notify but not return the items.
+	 */
+	private void notifyOverflowLost(DonationSubmission mail, int overflowLost) {
+		MinecraftServer server = mail.world.getServer();
+		if (mail.senderUuid == null || server == null) {
+			LOGGER.warn("{} donated building-material items were lost to village inventory overflow (no sender to notify)",
+				overflowLost);
+			return;
+		}
+		justfatlard.village_mail.api.MailApi.sendMessage(
+			server, mail.senderUuid,
+			Component.translatable("village-mail.return.sender").getString(),
+			Component.translatable("village-mail.return.overflow_body", overflowLost).getString()
+		);
+	}
+
+	/**
 	 * Distribute donated food to villagers to enable breeding.
 	 * Villagers need 12 food points (3 bread = 12 points) to breed.
 	 * Each food item donated converts to 1 bread given to a villager,
 	 * spending from the donated count rather than creating items from nothing.
 	 */
-	private void distributeFood(List<VillagerEntity> villagers, int foodCount, ServerWorld world) {
+	private void distributeFood(List<Villager> villagers, int foodCount, ServerLevel world) {
 		if (villagers.isEmpty() || foodCount <= 0) return;
 
-		// 3 bread per villager to trigger breeding willingness
 		int breadPerVillager = 3;
 		int villagersToFeed = Math.min(villagers.size(), foodCount / breadPerVillager);
 		int foodRemaining = foodCount;
 
 		int villagersReadyToBreed = 0;
 		for (int i = 0; i < villagersToFeed; i++) {
-			VillagerEntity villager = villagers.get(i);
+			Villager villager = villagers.get(i);
 
 			int toGive = Math.min(breadPerVillager, foodRemaining);
 			for (int j = 0; j < toGive; j++) {
-				villager.getInventory().addStack(new ItemStack(Items.BREAD));
+				villager.getInventory().addItem(new ItemStack(Items.BREAD));
 			}
 			foodRemaining -= toGive;
 
-			villager.setBreedingAge(0);
+			villager.setAge(0);
 
 			if (world.getRandom().nextFloat() < 0.5f) {
-				world.spawnParticles(
-					net.minecraft.particle.ParticleTypes.HEART,
+				world.sendParticles(
+					ParticleTypes.HEART,
 					villager.getX(), villager.getY() + 1.5, villager.getZ(),
 					1, 0.25, 0.25, 0.25, 0.0
 				);
@@ -269,11 +334,11 @@ public class MailDeliveryManager {
 	}
 
 	private void processVillagerMail(MinecraftServer server) {
-		long currentTime = server.getOverworld().getTime();
-		long currentTick = server.getTicks();
+		long currentTime = server.overworld().getGameTime();
+		long currentTick = server.getTickCount();
 		PlayerMailStorage storage = PlayerMailStorage.get(server);
 
-		// Phase 1: Check active deliveries — did any mail person arrive?
+		// Phase 1: check whether any active delivery's mail person has arrived
 		Iterator<Map.Entry<UUID, ActiveDelivery>> deliveryIt = activeDeliveries.entrySet().iterator();
 		while (deliveryIt.hasNext()) {
 			Map.Entry<UUID, ActiveDelivery> entry = deliveryIt.next();
@@ -285,24 +350,22 @@ public class MailDeliveryManager {
 				continue;
 			}
 
-			// Find the villager
 			MailboxBlockEntity mailbox = findPlayerMailbox(server, delivery.mailboxOwner());
 			if (mailbox == null) {
 				deliveryIt.remove();
 				continue;
 			}
 
-			ServerWorld mailboxWorld = (ServerWorld) mailbox.getWorld();
+			ServerLevel mailboxWorld = (ServerLevel) mailbox.getLevel();
 			if (mailboxWorld == null) {
 				deliveryIt.remove();
 				continue;
 			}
 
-			// Search for the specific villager by UUID
-			Box searchBox = new Box(delivery.targetMailbox()).expand(64);
-			List<VillagerEntity> villagers = mailboxWorld.getEntitiesByClass(
-				VillagerEntity.class, searchBox,
-				v -> v.getUuid().equals(delivery.villagerUuid())
+			AABB searchBox = new AABB(delivery.targetMailbox()).inflate(64);
+			List<Villager> villagers = mailboxWorld.getEntities(
+				EntityTypeTest.forClass(Villager.class), searchBox,
+				v -> v.getUUID().equals(delivery.villagerUuid())
 			);
 
 			if (villagers.isEmpty()) {
@@ -310,16 +373,15 @@ public class MailDeliveryManager {
 				continue;
 			}
 
-			VillagerEntity villager = villagers.get(0);
+			Villager villager = villagers.get(0);
 
-			// Check if the villager has arrived (within 3 blocks of the mailbox)
-			if (villager.getBlockPos().isWithinDistance(delivery.targetMailbox(), 3.0)) {
+			if (villager.blockPosition().closerThan(delivery.targetMailbox(), 3.0)) {
 				sendVillagerMail(mailbox, villager, server);
 				storage.setVillagerMailCooldown(delivery.targetMailbox(), currentTime);
 				deliveryIt.remove();
 			} else {
 				// Re-issue navigation in case it got interrupted
-				villager.getNavigation().startMovingTo(
+				villager.getNavigation().moveTo(
 					delivery.targetMailbox().getX() + 0.5,
 					delivery.targetMailbox().getY(),
 					delivery.targetMailbox().getZ() + 0.5,
@@ -328,58 +390,54 @@ public class MailDeliveryManager {
 			}
 		}
 
-		// Phase 2: Start new deliveries for mailboxes that are due.
-		// Entity search runs per player — O(players * entities_in_box). For a small SMP this is fine.
+		// Phase 2: start new deliveries for mailboxes that are due.
+		// Entity search runs per player, O(players * entities_in_box). For a small SMP this is fine.
 		// On larger servers, consider staggering players across ticks.
-		for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
-			MailboxBlockEntity mailbox = findPlayerMailbox(server, player.getUuid());
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			MailboxBlockEntity mailbox = findPlayerMailbox(server, player.getUUID());
 			if (mailbox == null) continue;
 
-			BlockPos pos = mailbox.getPos();
+			BlockPos pos = mailbox.getBlockPos();
 			Optional<Long> lastTime = storage.getVillagerMailCooldown(pos);
 
 			if (lastTime.isPresent() && currentTime - lastTime.get() <= VILLAGER_MAIL_INTERVAL) continue;
 
-			// Skip if there's already an active delivery for this mailbox owner
-			if (activeDeliveries.containsKey(player.getUuid())) continue;
+			if (activeDeliveries.containsKey(player.getUUID())) continue;
 
-			ServerWorld mailboxWorld = (ServerWorld) mailbox.getWorld();
+			ServerLevel mailboxWorld = (ServerLevel) mailbox.getLevel();
 			if (mailboxWorld == null) continue;
 
-			// Search wider — the villager will walk to the mailbox
-			Box searchBox = new Box(pos).expand(64);
-			List<VillagerEntity> mailPersons = mailboxWorld.getEntitiesByClass(
-				VillagerEntity.class, searchBox,
-				v -> v.getVillagerData().profession().value() == Main.MAIL_PERSON
-					&& !activeDeliveries.values().stream().anyMatch(d -> d.villagerUuid().equals(v.getUuid()))
+			// Search wider: the villager will walk to the mailbox
+			AABB searchBox = new AABB(pos).inflate(64);
+			List<Villager> mailPersons = mailboxWorld.getEntities(
+				EntityTypeTest.forClass(Villager.class), searchBox,
+				v -> v.getVillagerData().profession().is(Main.MAIL_PERSON_KEY)
+					&& !activeDeliveries.values().stream().anyMatch(d -> d.villagerUuid().equals(v.getUUID()))
 			);
 
 			if (!mailPersons.isEmpty() && ThreadLocalRandom.current().nextFloat() < 0.4f) {
-				VillagerEntity mailPerson = mailPersons.get(0);
+				Villager mailPerson = mailPersons.get(0);
 
-				// If already close, deliver immediately
-				if (mailPerson.getBlockPos().isWithinDistance(pos, 3.0)) {
+				if (mailPerson.blockPosition().closerThan(pos, 3.0)) {
 					sendVillagerMail(mailbox, mailPerson, server);
 					storage.setVillagerMailCooldown(pos, currentTime);
 				} else {
-					// Start walking to the mailbox
-					mailPerson.getNavigation().startMovingTo(
+					mailPerson.getNavigation().moveTo(
 						pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5, 0.6
 					);
-					activeDeliveries.put(player.getUuid(), new ActiveDelivery(
-						mailPerson.getUuid(), pos, player.getUuid(), currentTick
+					activeDeliveries.put(player.getUUID(), new ActiveDelivery(
+						mailPerson.getUUID(), pos, player.getUUID(), currentTick
 					));
 				}
 			}
 		}
 
-		// Clean stale cooldown entries periodically
 		if (currentTick % 6000 == 0) {
 			storage.cleanStaleCooldowns(currentTime, VILLAGER_MAIL_INTERVAL * 10);
 		}
 	}
 
-	private void sendVillagerMail(MailboxBlockEntity mailbox, VillagerEntity villager, MinecraftServer server) {
+	private void sendVillagerMail(MailboxBlockEntity mailbox, Villager villager, MinecraftServer server) {
 		if (mailbox.getOwnerUuid() == null) return;
 
 		float roll = ThreadLocalRandom.current().nextFloat();
@@ -391,27 +449,25 @@ public class MailDeliveryManager {
 			// 30% chance: small gift
 			sendVillagerGift(mailbox, villager, server);
 		}
-		// 50% chance: just presence — the mail person walks over but leaves nothing.
-		// "The mail person is ambient. Visits happen. Gifts are occasional. Presence, not mechanics."
+		// Remaining 50%: just presence, the mail person walks over but leaves nothing
 
-		// Notify player the mail person visited
-		ServerPlayerEntity owner = server.getPlayerManager().getPlayer(mailbox.getOwnerUuid());
+		ServerPlayer owner = server.getPlayerList().getPlayer(mailbox.getOwnerUuid());
 		if (owner != null) {
 			if (roll < 0.50f) {
-				owner.sendMessage(Text.translatable("village-mail.delivery.villager_gift").formatted(net.minecraft.util.Formatting.YELLOW), true);
+				owner.sendSystemMessage(Component.translatable("village-mail.delivery.villager_gift").withStyle(ChatFormatting.YELLOW), true);
 			}
 		}
 	}
 
-	private void sendVillagerGift(MailboxBlockEntity mailbox, VillagerEntity villager, MinecraftServer server) {
+	private void sendVillagerGift(MailboxBlockEntity mailbox, Villager villager, MinecraftServer server) {
 		ItemStack gift = getRandomVillagerGift();
 		if (gift.isEmpty()) return;
 
 		MailMessage message = new MailMessage.Builder()
-			.sender(villager.getUuid(), villager.getName().getString())
+			.sender(villager.getUUID(), villager.getName().getString())
 			.recipient(mailbox.getOwnerUuid())
 			.type(MailMessage.MessageType.VILLAGER)
-			.body(Text.translatable("village-mail.delivery.villager_gift_body").getString())
+			.body(Component.translatable("village-mail.delivery.villager_gift_body").getString())
 			.attachment(gift)
 			.button(MessageButton.collectItems())
 			.build();
@@ -419,12 +475,11 @@ public class MailDeliveryManager {
 		PlayerMailStorage.get(server).addMessage(mailbox.getOwnerUuid(), message);
 	}
 
-	private void sendQuestOffer(MailboxBlockEntity mailbox, VillagerEntity villager, MinecraftServer server) {
-		// Ask VQ to generate a quest offer, delivered by mail
+	private void sendQuestOffer(MailboxBlockEntity mailbox, Villager villager, MinecraftServer server) {
 		VillageQuestsIntegration.sendQuestOfferByMail(server, mailbox.getOwnerUuid(),
 			villager.getName().getString(),
-			Text.translatable("village-mail.delivery.quest_offer_subject").getString(),
-			Text.translatable("village-mail.delivery.quest_offer").getString());
+			Component.translatable("village-mail.delivery.quest_offer_subject").getString(),
+			Component.translatable("village-mail.delivery.quest_offer").getString());
 	}
 
 	private ItemStack getRandomVillagerGift() {
@@ -455,41 +510,37 @@ public class MailDeliveryManager {
 
 	/**
 	 * Send obituary letters to player mailboxes near a villager that just died.
-	 * Delivered with a short delay — the mail person needs a moment to write it up.
+	 * Delivered with a short delay; the mail person needs a moment to write it up.
 	 */
-	public void sendObituaries(VillagerEntity villager, DamageSource damageSource, MinecraftServer server) {
-		String dimension = villager.getEntityWorld().getRegistryKey().getValue().toString();
-		BlockPos deathPos = villager.getBlockPos();
+	public void sendObituaries(Villager villager, DamageSource damageSource, MinecraftServer server) {
+		String dimension = villager.level().dimension().identifier().toString();
+		BlockPos deathPos = villager.blockPosition();
 		String villagerName = villager.getName().getString();
 
-		// Build the profession label
 		VillagerProfession profession = villager.getVillagerData().profession().value();
 		String professionName = getProfessionName(profession);
 
-		// Build the obituary body
 		String body = composeObituary(villagerName, professionName, damageSource, villager);
 
-		// Find all mailboxes in the same dimension within range
 		PlayerMailStorage storage = PlayerMailStorage.get(server);
-		long currentTick = server.getTicks();
+		long currentTick = server.getTickCount();
 		for (UUID ownerUuid : storage.getMailboxOwners()) {
 			var locOpt = storage.getMailboxLocation(ownerUuid);
 			if (locOpt.isEmpty()) continue;
 
 			var loc = locOpt.get();
 			if (!loc.dimension().equals(dimension)) continue;
-			if (!loc.pos().isWithinDistance(deathPos, OBITUARY_RADIUS)) continue;
+			if (!loc.pos().closerThan(deathPos, OBITUARY_RADIUS)) continue;
 
-			// Throttle obituaries per player to prevent flood during raids
 			Long lastTime = lastObituaryTime.get(ownerUuid);
 			if (lastTime != null && currentTick - lastTime < OBITUARY_COOLDOWN_TICKS) continue;
 			lastObituaryTime.put(ownerUuid, currentTick);
 
-			// Deliver with a short delay (10–30 seconds)
+			// Deliver with a short delay (10 to 30 seconds)
 			final String finalBody = body;
 			scheduleDelayed(server, 200 + ThreadLocalRandom.current().nextInt(400), () -> {
 				MailMessage message = new MailMessage.Builder()
-					.sender(null, Text.translatable("village-mail.obituary.sender").getString())
+					.sender(null, Component.translatable("village-mail.obituary.sender").getString())
 					.recipient(ownerUuid)
 					.type(MailMessage.MessageType.VILLAGER)
 					.body(finalBody)
@@ -497,30 +548,30 @@ public class MailDeliveryManager {
 
 				PlayerMailStorage.get(server).addMessage(ownerUuid, message);
 
-				ServerPlayerEntity owner = server.getPlayerManager().getPlayer(ownerUuid);
+				ServerPlayer owner = server.getPlayerList().getPlayer(ownerUuid);
 				if (owner != null) {
-					justfatlard.village_mail.network.MailNetworking.sendUnreadCount(owner);
+					justfatlard.village_mail.pandorical.MailHud.updateUnreadCount(owner);
 				}
 			});
 		}
 	}
 
 	private String getProfessionName(VillagerProfession profession) {
-		var profId = Registries.VILLAGER_PROFESSION.getId(profession);
+		var profId = BuiltInRegistries.VILLAGER_PROFESSION.getKey(profession);
 		if (profId == null || profId.getPath().equals("none") || profId.getPath().equals("nitwit")) {
 			return null;
 		}
-		return profession.id().getString();
+		return profession.name().getString();
 	}
 
-	private String composeObituary(String name, String professionName, DamageSource source, VillagerEntity villager) {
+	private String composeObituary(String name, String professionName, DamageSource source, Villager villager) {
 		var rng = ThreadLocalRandom.current();
 
 		// Villagers are unnamed unless VQ (or a name tag) gives them one.
-		// "Villager" is the vanilla default — treat it as unnamed.
+		// "Villager" is the vanilla default: treat it as unnamed.
 		boolean hasName = name != null && !name.equals("Villager") && !name.isEmpty();
 
-		// Opening line — shaped by what we know about them
+		// Opening line: shaped by what we know about them
 		String opening;
 		if (hasName && professionName != null) {
 			String[] templates = {
@@ -552,10 +603,8 @@ public class MailDeliveryManager {
 			opening = templates[rng.nextInt(templates.length)];
 		}
 
-		// Cause of death — kept brief
 		String cause = getCauseOfDeathFlavor(source, villager);
 
-		// Closing — one quiet line
 		String[] closings = {
 			"The village will be quieter for a while.",
 			"They will be missed.",
@@ -570,58 +619,56 @@ public class MailDeliveryManager {
 		return opening + " " + closing;
 	}
 
-	private String getCauseOfDeathFlavor(DamageSource source, VillagerEntity villager) {
-		if (source.isOf(DamageTypes.PLAYER_ATTACK) || source.isOf(DamageTypes.PLAYER_EXPLOSION)) {
+	private String getCauseOfDeathFlavor(DamageSource source, Villager villager) {
+		if (source.is(DamageTypes.PLAYER_ATTACK) || source.is(DamageTypes.PLAYER_EXPLOSION)) {
 			return "It seems someone did this.";
 		}
-		if (source.getAttacker() instanceof net.minecraft.entity.mob.ZombieEntity) {
+		if (source.getEntity() instanceof Zombie) {
 			return "The undead took them in the night.";
 		}
-		if (source.getAttacker() instanceof net.minecraft.entity.mob.RavagerEntity
-			|| source.getAttacker() instanceof net.minecraft.entity.mob.PillagerEntity
-			|| source.getAttacker() instanceof net.minecraft.entity.mob.VindicatorEntity
-			|| source.getAttacker() instanceof net.minecraft.entity.mob.EvokerEntity) {
+		if (source.getEntity() instanceof Ravager
+			|| source.getEntity() instanceof Pillager
+			|| source.getEntity() instanceof Vindicator
+			|| source.getEntity() instanceof Evoker) {
 			return "Raiders were responsible.";
 		}
-		if (source.getAttacker() != null) {
+		if (source.getEntity() != null) {
 			return "Something got to them.";
 		}
-		if (source.isOf(DamageTypes.FALL)) {
+		if (source.is(DamageTypes.FALL)) {
 			return "They fell.";
 		}
-		if (source.isOf(DamageTypes.DROWN)) {
+		if (source.is(DamageTypes.DROWN)) {
 			return "The water claimed them.";
 		}
-		if (source.isOf(DamageTypes.ON_FIRE) || source.isOf(DamageTypes.IN_FIRE) || source.isOf(DamageTypes.LAVA)) {
+		if (source.is(DamageTypes.ON_FIRE) || source.is(DamageTypes.IN_FIRE) || source.is(DamageTypes.LAVA)) {
 			return "A fire took them.";
 		}
-		if (source.isOf(DamageTypes.LIGHTNING_BOLT)) {
+		if (source.is(DamageTypes.LIGHTNING_BOLT)) {
 			return "Lightning struck.";
 		}
-		if (source.isOf(DamageTypes.EXPLOSION) || source.isOf(DamageTypes.BAD_RESPAWN_POINT)) {
+		if (source.is(DamageTypes.EXPLOSION) || source.is(DamageTypes.BAD_RESPAWN_POINT)) {
 			return "An explosion. Nothing left to find.";
 		}
 		return null;
 	}
 
-	// Find a mailbox owned by a specific player using the registry
 	private MailboxBlockEntity findPlayerMailbox(MinecraftServer server, UUID playerUuid) {
 		PlayerMailStorage storage = PlayerMailStorage.get(server);
 		var locationOpt = storage.getMailboxLocation(playerUuid);
 		if (locationOpt.isEmpty()) return null;
 
 		var location = locationOpt.get();
-		// Find the world by dimension identifier
-		for (ServerWorld world : server.getWorlds()) {
-			if (world.getRegistryKey().getValue().toString().equals(location.dimension())) {
-				// Only check if the chunk is loaded — don't force-load
-				if (world.isChunkLoaded(location.pos())) {
+		for (ServerLevel world : server.getAllLevels()) {
+			if (world.dimension().identifier().toString().equals(location.dimension())) {
+				// Only check if the chunk is loaded; don't force-load
+				if (world.hasChunk(location.pos().getX() >> 4, location.pos().getZ() >> 4)) {
 					if (world.getBlockEntity(location.pos()) instanceof MailboxBlockEntity mailbox) {
 						if (playerUuid.equals(mailbox.getOwnerUuid())) {
 							return mailbox;
 						}
 					}
-					// Block at registered position isn't a mailbox anymore — stale entry
+					// Block at registered position isn't a mailbox anymore: stale entry
 					storage.unregisterMailbox(playerUuid, location.pos());
 				}
 				return null;

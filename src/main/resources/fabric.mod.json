@@ -1,34 +1,32 @@
 {
-  "schemaVersion": 1,
-  "id": "village-mail",
-  "version": "${version}",
-  "name": "Village Mail",
-  "description": "A postal system that feels like it was always part of Minecraft. Send letters with item attachments through the village post office, buy a mailbox from the local mail person, and receive deliveries. Server-side — works with vanilla clients.",
-  "authors": [
-    "justfatlard"
-  ],
-  "contact": {
-    "sources": "https://github.com/fatlard1993/village-mail"
-  },
-  "license": "MIT",
-  "icon": "assets/village-mail/icon.png",
-  "environment": "*",
-  "entrypoints": {
-    "main": [
-      "justfatlard.village_mail.Main"
-    ],
-    "client": [
-      "justfatlard.village_mail.MainClient"
-    ]
-  },
-  "depends": {
-    "fabricloader": ">=0.18.0",
-    "fabric-api": "*",
-    "minecraft": "~1.21.11",
-    "java": ">=21"
-  },
-  "suggests": {
-    "village-quests": "*",
-    "village-builder": "*"
-  }
+ "schemaVersion": 1,
+ "id": "village-mail",
+ "version": "${version}",
+ "name": "Village Mail",
+ "description": "A postal system that feels like it was always part of Minecraft. Send letters with item attachments through the village post office, buy a mailbox from the local mail person, and receive deliveries. UI is driven through Pandorical — players without the Pandorical mod get a chat message instead of a mail screen.",
+ "authors": [
+  "justfatlard"
+ ],
+ "contact": {
+  "sources": "https://github.com/fatlard1993/village-mail"
+ },
+ "license": "MIT",
+ "icon": "assets/village-mail/icon.png",
+ "environment": "*",
+ "entrypoints": {
+  "main": [
+   "justfatlard.village_mail.Main"
+  ]
+ },
+ "depends": {
+  "fabricloader": ">=0.18.0",
+  "fabric-api": "*",
+  "minecraft": ">=26.2",
+  "java": ">=25",
+  "pandorical": ">=1.0.0"
+ },
+ "suggests": {
+  "village-quests-justfatlard": "*",
+  "village-builder": "*"
+ }
 }

@@ -6,3 +6,6 @@ pluginManagement {
 }
 
 rootProject.name = "village-mail"
+
+include ':pandorical'
+project(':pandorical').projectDir = new File(rootProject.projectDir, '../pandorical')
