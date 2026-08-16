@@ -5,7 +5,6 @@
 	"item.village-mail.public_mailbox": "Public Mailbox",
 	"entity.minecraft.villager.village-mail.mail_person": "Mail Person",
 	"itemGroup.village-mail.village_mail": "Village Mail",
-
 	"village-mail.screen.message_title": "Message",
 	"village-mail.screen.title_reply": "Reply",
 	"village-mail.screen.title_forward": "Forward",
@@ -27,30 +26,26 @@
 	"village-mail.screen.unread_count": "(%d new)",
 	"village-mail.screen.offline": "(offline)",
 	"village-mail.screen.forwarded_prefix": "---Forwarded---",
-	"village-mail.screen.items_collected": "\u2713 Items collected",
-	"village-mail.screen.attachment_count": "\u2709 %d attached",
+	"village-mail.screen.items_collected": "✓ Items collected",
+	"village-mail.screen.attachment_count": "✉ %d attached",
 	"village-mail.screen.badge_quest": "Request",
 	"village-mail.screen.badge_mod": "Notice",
 	"village-mail.screen.badge_system": "System",
 	"village-mail.screen.time_just_now": "Just now",
 	"village-mail.screen.time_minutes_ago": "%dm ago",
 	"village-mail.screen.time_hours_ago": "%dh ago",
-
-	"village-mail.hud.unread": "\u2709 %d",
-
+	"village-mail.hud.unread": "✉ %d",
 	"village-mail.button.reply": "Reply",
 	"village-mail.button.forward": "Forward",
 	"village-mail.button.collect_items": "Collect Items",
 	"village-mail.button.accept": "Accept",
 	"village-mail.button.decline": "Decline",
-
 	"village-mail.feedback.message_sent": "Message sent.",
 	"village-mail.feedback.items_collected": "Items collected.",
 	"village-mail.feedback.no_handler": "This action is not available",
 	"village-mail.feedback.donation_submitted": "Your donation was received by the village.",
 	"village-mail.feedback.mailbox_full": "Your mailbox is full! Some items were lost.",
 	"village-mail.feedback.message_deleted": "Message deleted.",
-
 	"village-mail.error.message_not_found": "Message not found",
 	"village-mail.error.invalid_message": "Invalid message",
 	"village-mail.error.button_not_found": "Button not found",
@@ -64,7 +59,6 @@
 	"village-mail.error.already_collected": "Items already collected",
 	"village-mail.error.no_items": "No items to collect",
 	"village-mail.error.pandorical_required": "Mail requires the Pandorical mod on your client.",
-
 	"village-mail.delivery.villager_gift": "A villager left something for you.",
 	"village-mail.delivery.villager_gift_body": "A small gift for you.",
 	"village-mail.delivery.donation_received_mixed": "The village put your gifts to use — %d food, %d materials, %d other.",
@@ -74,31 +68,33 @@
 	"village-mail.delivery.gratitude": "Thank you for your generosity. The village will put your gift to good use.",
 	"village-mail.delivery.quest_offer": "I have a task that could use a capable hand, if you're willing.",
 	"village-mail.delivery.quest_offer_subject": "A Task for You",
-
 	"village-mail.return.sender": "Village Post Office",
 	"village-mail.return.rejected_body": "The village couldn't use this, so we've sent it back to you.",
 	"village-mail.return.overflow_body": "The village storeroom was full — %d of your building materials couldn't be taken in and were lost.",
-
 	"village-mail.api.new_mail_from": "You have mail from %s.",
 	"village-mail.api.new_mail": "You have mail.",
-
 	"village-mail.quest.check_mail.has_mail": "Mail waiting: %d",
 	"village-mail.quest.check_mail.no_mail": "Nothing for you today, I'm afraid.",
 	"village-mail.quest.send_package.has_paper": "Sure, just wrap it up and I'll deliver it for 5 emeralds.",
 	"village-mail.quest.send_package.no_paper": "You'll need some paper to wrap your package first.",
 	"village-mail.quest.donation.rare": "The village noticed your generosity. A few villagers seemed especially grateful.",
 	"village-mail.quest.donation.normal": "The village received your gift.",
-
 	"village-mail.dialogue.option.check_mail": "Any mail for me?",
 	"village-mail.dialogue.option.send_package": "I'd like to send a package",
 	"village-mail.dialogue.option.route_gossip": "Heard anything on your route?",
 	"village-mail.dialogue.option.mail_route": "How's the route?",
 	"village-mail.dialogue.option.weight_of_mail": "You ever get tired of carrying other people's words?",
 	"village-mail.dialogue.option.deep_confession": "You've been at this a long time. Ever cross a line?",
-
 	"village-mail.screen.mailbox_title": "Mailbox - %s",
 	"village-mail.screen.mailbox_belongs_to": "This mailbox belongs to %s.",
 	"village-mail.screen.recipient_donation": "Village donation",
-
-	"village-mail.obituary.sender": "The Village"
+	"village-mail.obituary.sender": "The Village",
+	"village-mail.screen.bulletin": "Notice Board",
+	"village-mail.screen.bulletin_title": "Village Notice Board",
+	"village-mail.bulletin.weather": "Today's Weather",
+	"village-mail.bulletin.notices": "Notices",
+	"village-mail.bulletin.quiet": "Nothing posted. A quiet week.",
+	"village-mail.bulletin.weather.clear": "Clear skies. Good drying weather.",
+	"village-mail.bulletin.weather.rain": "Rain. Bring the washing in.",
+	"village-mail.bulletin.weather.storm": "Storm overhead. Stay off the high ground."
 }

@@ -187,6 +187,7 @@ public class Main implements ModInitializer {
 		// 3. VillageStructureInjector before world gen
 		// 4. VQ init after MailScreens: VQ's MailSystemIntegration may send mail back
 		PlayerMailStorage.init();
+		justfatlard.village_mail.mail.VillageBulletin.init();
 
 		MailScreens.registerHandlers();
 

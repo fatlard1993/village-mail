@@ -522,6 +522,14 @@ public class MailDeliveryManager {
 
 		String body = composeObituary(villagerName, professionName, damageSource, villager);
 
+		// Pinned to the village's board as well as mailed. The board is not
+		// rate-limited per player the way the letters below are: a notice posted
+		// once is read by whoever walks past, including someone who arrives after
+		// the funeral, and nobody gets it twice for owning two mailboxes.
+		if (villager.level() instanceof net.minecraft.server.level.ServerLevel serverLevel) {
+			VillageBulletin.get(server).post(serverLevel, deathPos, body);
+		}
+
 		PlayerMailStorage storage = PlayerMailStorage.get(server);
 		long currentTick = server.getTickCount();
 		for (UUID ownerUuid : storage.getMailboxOwners()) {

@@ -15,6 +15,7 @@ import justfatlard.village_mail.api.MailApiImpl;
 import justfatlard.village_mail.mail.MailMessage;
 import justfatlard.village_mail.mail.MessageButton;
 import justfatlard.village_mail.mail.PlayerMailStorage;
+import justfatlard.village_mail.mail.VillageBulletin;
 
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
@@ -53,6 +54,10 @@ public final class MailScreens {
 	public static final String SCREEN_DETAIL = "village-mail:message_detail";
 	public static final String SCREEN_COMPOSE = "village-mail:compose";
 	public static final String SCREEN_PUBLIC_MAILBOX = "village-mail:public_mailbox";
+	public static final String SCREEN_BULLETIN = "village-mail:bulletin";
+
+	/** Notices a board shows at once. More than this and it stops being scannable. */
+	private static final int BULLETIN_MAX_NOTICES = 6;
 
 	private static final int VISIBLE_MESSAGES = 5;
 	private static final long SEND_COOLDOWN_MS = 1000;
@@ -142,6 +147,13 @@ public final class MailScreens {
 			if (session != null) session.body = d.getOrDefault("text", "");
 		});
 		screens.onAction(SCREEN_PUBLIC_MAILBOX, "send_btn", (p, d) -> handlePublicSend(p));
+		screens.onAction(SCREEN_PUBLIC_MAILBOX, "bulletin_btn", (p, d) -> openBulletin(p));
+		// Back re-opens the mailbox rather than closing: the board is a page of the
+		// mailbox, not a separate errand.
+		screens.onAction(SCREEN_BULLETIN, "bulletin_back", (p, d) -> {
+			PublicMailboxSession session = publicMailboxSessions.get(p.getUUID());
+			if (session != null) openPublicMailbox(p, session.pos);
+		});
 		screens.onSlotChange(SCREEN_PUBLIC_MAILBOX, (p, slot, stack) -> updatePublicSendEnabled(p));
 		screens.onContainerRemoved(SCREEN_PUBLIC_MAILBOX, MailScreens::returnUnconsumedAttachment);
 	}
@@ -571,10 +583,79 @@ public final class MailScreens {
 			.button("send_btn", 132, 82, 60, 16, Map.of(
 				ComponentType.PROP_LABEL_KEY, "village-mail.screen.send",
 				ComponentType.PROP_ENABLED, String.valueOf(publicSendEnabled(session))))
+			.button("bulletin_btn", 8, 82, 76, 16, Map.of(
+				ComponentType.PROP_LABEL_KEY, "village-mail.screen.bulletin"))
 			.inventoryGrid("player_inv", 8, 108, 3, 9, 1)
 			.inventoryGrid("hotbar", 8, 166, 1, 9, 28);
 
 		PandoricalApi.screens().openContainer(player, b.build(), session.container, Set.of());
+	}
+
+	/**
+	 * The board half of the public mailbox: what the village would pin up rather
+	 * than post. Read-only, so it needs no session of its own; the mailbox
+	 * position comes from the session that opened it.
+	 */
+	public static void openBulletin(ServerPlayer player) {
+		PublicMailboxSession session = publicMailboxSessions.get(player.getUUID());
+		if (session == null) return;
+
+		ServerLevel level = player.level();
+		String title = Component.translatable("village-mail.screen.bulletin_title").getString();
+
+		ScreenBuilder b = new ScreenBuilder(SCREEN_BULLETIN)
+			.size(200, 170)
+			.title(title)
+			.panel("bg", 0, 0, 200, 170, Map.of(ComponentType.PROP_BACKGROUND, "#CC1E1E1E", ComponentType.PROP_BORDER, "beveled"))
+			.text("title", 10, 6, Map.of(ComponentType.PROP_TEXT, title, ComponentType.PROP_SHADOW, "true"))
+			.text("weather_head", 10, 24, Map.of(
+				ComponentType.PROP_TEXT, Component.translatable("village-mail.bulletin.weather").getString(),
+				ComponentType.PROP_COLOR, "#FFD27F"))
+			.text("weather_body", 10, 36, Map.of(
+				ComponentType.PROP_TEXT, weatherReport(level),
+				ComponentType.PROP_WRAP_WIDTH, "180"))
+			.text("notices_head", 10, 60, Map.of(
+				ComponentType.PROP_TEXT, Component.translatable("village-mail.bulletin.notices").getString(),
+				ComponentType.PROP_COLOR, "#FFD27F"));
+
+		List<VillageBulletin.Notice> notices =
+			VillageBulletin.get(level.getServer()).noticesNear(level, session.pos, BULLETIN_MAX_NOTICES);
+
+		if (notices.isEmpty()) {
+			b.text("notice_none", 10, 72, Map.of(
+				ComponentType.PROP_TEXT, Component.translatable("village-mail.bulletin.quiet").getString(),
+				ComponentType.PROP_COLOR, "#808080"));
+		} else {
+			int y = 72;
+			for (int i = 0; i < notices.size(); i++) {
+				Map<String, String> noticeProps = Map.of(
+					ComponentType.PROP_TEXT, "- " + notices.get(i).text(),
+					ComponentType.PROP_WRAP_WIDTH, "180",
+					ComponentType.PROP_COLOR, "#C0C0C0");
+				b.text("notice_" + i, 10, y, noticeProps);
+				y += 14;
+			}
+		}
+
+		b.button("bulletin_back", 8, 146, 60, 16, Map.of(ComponentType.PROP_LABEL_KEY, "village-mail.screen.back"));
+
+		PandoricalApi.screens().open(player, b.build());
+	}
+
+	/**
+	 * Plain language, not numbers: a notice board says what the sky is doing, the
+	 * way a villager would tell you on the way past.
+	 */
+	private static String weatherReport(ServerLevel level) {
+		String key;
+		if (level.isThundering()) {
+			key = "village-mail.bulletin.weather.storm";
+		} else if (level.isRaining()) {
+			key = "village-mail.bulletin.weather.rain";
+		} else {
+			key = "village-mail.bulletin.weather.clear";
+		}
+		return Component.translatable(key).getString();
 	}
 
 	private static void navigatePublicMailbox(ServerPlayer player, int delta) {
