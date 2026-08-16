@@ -20,10 +20,6 @@ Village Mail's entire UI (mailbox list, message detail view, compose screen, and
 - **Optional integration with village-quests**: quest offers and reputation-driven consequences can arrive by mail when village-quests is installed
 - **Optional integration with village-builder**: post office structures register into village-builder's build pools, and construction milestones can notify mailbox-owning players, when village-builder is installed
 
-## Requirements
-
-Targets the Minecraft, Fabric Loader, and Fabric API versions declared in this mod's `gradle.properties`; check there for the exact currently-supported version.
-
 ## Pandorical
 
 Village Mail uses Pandorical for two things:
@@ -35,8 +31,8 @@ Pandorical must be installed client-side for any of this to work. Without it, a 
 
 ## Installation
 
-Install alongside its declared dependencies (see `fabric.mod.json`), and make sure Pandorical is installed on every client that needs to use the mail system.
+Install server-side alongside its declared dependencies (see `fabric.mod.json`); connecting clients need only Pandorical. Version targets live in `gradle.properties` (Minecraft, loader, Fabric API) and `fabric.mod.json` (Java).
 
 ## License
 
-MIT
+MIT, see [LICENSE](LICENSE).
