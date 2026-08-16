@@ -17,6 +17,11 @@ import org.slf4j.LoggerFactory;
 
 public class VillageStructureInjector {
 	private static final Logger LOGGER = LoggerFactory.getLogger("village-mail");
+	// Vanilla's houses pools total ~87 weight, so 3 is ~3% per house slot:
+	// most sizable villages get a post office, duplicates stay uncommon.
+	// Weight 5 produced two in one village; weight 1 produced almost none.
+	private static final int POST_OFFICE_WEIGHT = 3;
+
 	private static boolean injected = false;
 
 	// Houses pools - buildings that spawn in villages
@@ -79,9 +84,7 @@ public class VillageStructureInjector {
 
 				StructureTemplatePool pool = poolRegistry.getValue(poolId);
 				if (pool != null) {
-					// Weight 1: jigsaw pool selection has no uniqueness, so higher
-					// weights make duplicate post offices in one village routine
-					if (addElementToPool(pool, postOfficeElement, 1)) {
+					if (addElementToPool(pool, postOfficeElement, POST_OFFICE_WEIGHT)) {
 						LOGGER.info("Added " + biome + " post office to: " + poolId);
 					}
 				} else {
