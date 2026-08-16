@@ -12,7 +12,7 @@ Village Mail's entire UI (mailbox list, message detail view, compose screen, and
 - **Public mailbox**: a workstation block found at village post offices; write a letter to any online player or known mailbox owner and attach a single item
 - **Mail Person villager profession**: works the public mailbox, sells mailboxes, buys paper, and periodically visits players' personal mailboxes (roughly every 5 real-time minutes) with occasional small gifts
 - **Message replies, forwards, and item collection**: read a letter, collect its attachment, reply, or forward it from the message detail screen
-- **Donation thank-you mail**: donating an item at the public mailbox triggers a short delayed thank-you letter from "The Village"
+- **Village donations**: when village-builder is installed, the public mailbox's recipient list includes a "Village donation" entry; send it an attached item to donate materials toward village construction, and a short delayed thank-you letter arrives from "The Village"
 - **Villager obituaries**: when a villager in a tracked village dies, nearby mailbox owners receive a short delayed letter about it
 - **Unread-mail HUD badge**: a small "X unread" indicator appears in the corner of the screen whenever you have unread mail, updating live as messages arrive or are read
 - **Persistent, auto-saving storage**: mail and mailbox ownership survive server restarts and crashes

@@ -98,7 +98,7 @@
 
 	"village-mail.screen.mailbox_title": "Mailbox - %s",
 	"village-mail.screen.mailbox_belongs_to": "This mailbox belongs to %s.",
-	"village-mail.screen.donate": "Donate",
+	"village-mail.screen.recipient_donation": "Village donation",
 
 	"village-mail.obituary.sender": "The Village"
 }

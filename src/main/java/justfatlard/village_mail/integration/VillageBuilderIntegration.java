@@ -93,6 +93,16 @@ public class VillageBuilderIntegration {
 	}
 
 	/**
+	 * Whether the Village Builder donation path is usable (mod loaded and its API
+	 * resolved via reflection). UI entry points that only make sense with a live
+	 * donation target must check this, not just isModLoaded.
+	 */
+	public static boolean isAvailable() {
+		initReflection();
+		return available;
+	}
+
+	/**
 	 * Register village-mail structures with Village Builder.
 	 * Each biome variant carries its biome preference so the builder picks the
 	 * right style for the village; fallback materials cover NBT analysis failure.

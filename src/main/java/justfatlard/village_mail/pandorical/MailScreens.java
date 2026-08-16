@@ -9,6 +9,7 @@ import justfatlard.pandorical.api.ScreenBuilder;
 import justfatlard.pandorical.protocol.ComponentUpdate;
 
 import justfatlard.village_mail.Main;
+import justfatlard.village_mail.integration.VillageBuilderIntegration;
 import justfatlard.village_mail.api.MailApi;
 import justfatlard.village_mail.api.MailApiImpl;
 import justfatlard.village_mail.mail.MailMessage;
@@ -140,8 +141,8 @@ public final class MailScreens {
 			PublicMailboxSession session = publicMailboxSessions.get(p.getUUID());
 			if (session != null) session.body = d.getOrDefault("text", "");
 		});
-		screens.onAction(SCREEN_PUBLIC_MAILBOX, "donate_btn", (p, d) -> handleDonate(p));
 		screens.onAction(SCREEN_PUBLIC_MAILBOX, "send_btn", (p, d) -> handlePublicSend(p));
+		screens.onSlotChange(SCREEN_PUBLIC_MAILBOX, (p, slot, stack) -> updatePublicSendEnabled(p));
 		screens.onContainerRemoved(SCREEN_PUBLIC_MAILBOX, MailScreens::returnUnconsumedAttachment);
 	}
 
@@ -532,6 +533,11 @@ public final class MailScreens {
 		session.container = new SimpleContainer(1);
 		session.pos = pos;
 		session.recipients = buildRecipients(player);
+		if (VillageBuilderIntegration.isAvailable()) {
+			// First in the carousel per the owner's call: donation is the
+			// mailbox's headline civic act, person-to-person mail cycles after
+			session.recipients.add(0, donationEntry());
+		}
 		session.selectedIndex = 0;
 		session.body = "";
 		session.consumed = false;
@@ -562,8 +568,9 @@ public final class MailScreens {
 				ComponentType.PROP_TEXT, Component.translatable("village-mail.screen.attach").getString(),
 				ComponentType.PROP_COLOR, "#606060"))
 			.inventoryGrid("attachment_slot", 91, 60, 1, 1, 0)
-			.button("donate_btn", 8, 82, 60, 16, Map.of(ComponentType.PROP_LABEL_KEY, "village-mail.screen.donate"))
-			.button("send_btn", 132, 82, 60, 16, Map.of(ComponentType.PROP_LABEL_KEY, "village-mail.screen.send"))
+			.button("send_btn", 132, 82, 60, 16, Map.of(
+				ComponentType.PROP_LABEL_KEY, "village-mail.screen.send",
+				ComponentType.PROP_ENABLED, String.valueOf(publicSendEnabled(session))))
 			.inventoryGrid("player_inv", 8, 108, 3, 9, 1)
 			.inventoryGrid("hotbar", 8, 166, 1, 9, 28);
 
@@ -584,7 +591,35 @@ public final class MailScreens {
 		PandoricalApi.screens().update(player, screenId, List.of(
 			new ComponentUpdate("recipient_name", Map.of(ComponentType.PROP_TEXT, displayName(selected))),
 			new ComponentUpdate("prev_btn", Map.of(ComponentType.PROP_ENABLED, String.valueOf(session.selectedIndex > 0))),
-			new ComponentUpdate("next_btn", Map.of(ComponentType.PROP_ENABLED, String.valueOf(session.selectedIndex < session.recipients.size() - 1)))
+			new ComponentUpdate("next_btn", Map.of(ComponentType.PROP_ENABLED, String.valueOf(session.selectedIndex < session.recipients.size() - 1))),
+			new ComponentUpdate("send_btn", Map.of(ComponentType.PROP_ENABLED, String.valueOf(publicSendEnabled(session))))
+		));
+	}
+
+	// The village-donation pseudo-recipient is marked by a null uuid; buildRecipients
+	// never emits null uuids, so this cannot collide with a real recipient.
+	private static RecipientEntry donationEntry() {
+		return new RecipientEntry(null,
+			Component.translatable("village-mail.screen.recipient_donation").getString(), true);
+	}
+
+	private static boolean isDonation(RecipientEntry entry) {
+		return entry.uuid() == null;
+	}
+
+	private static boolean publicSendEnabled(PublicMailboxSession session) {
+		if (session.recipients.isEmpty()) return false;
+		RecipientEntry selected = session.recipients.get(session.selectedIndex);
+		return !isDonation(selected) || !session.container.getItem(0).isEmpty();
+	}
+
+	private static void updatePublicSendEnabled(ServerPlayer player) {
+		PublicMailboxSession session = publicMailboxSessions.get(player.getUUID());
+		if (session == null) return;
+		String screenId = PandoricalApi.getOpenScreenId(player.getUUID());
+		if (screenId == null) return;
+		PandoricalApi.screens().update(player, screenId, List.of(
+			new ComponentUpdate("send_btn", Map.of(ComponentType.PROP_ENABLED, String.valueOf(publicSendEnabled(session))))
 		));
 	}
 
@@ -633,6 +668,12 @@ public final class MailScreens {
 			return;
 		}
 		RecipientEntry recipient = session.recipients.get(session.selectedIndex);
+		if (isDonation(recipient)) {
+			// handleDonate re-checks for an empty attachment server-side; the greyed
+			// send button is client-side state and cannot be trusted as validation
+			handleDonate(player);
+			return;
+		}
 		ItemStack attachment = session.container.getItem(0).copy();
 		boolean sent = trySendMail(player, recipient.uuid(), session.body, attachment);
 		if (sent) {
@@ -686,6 +727,29 @@ public final class MailScreens {
 			if (onlinePlayer.getUUID().equals(player.getUUID())) continue;
 			recipients.putIfAbsent(onlinePlayer.getUUID(),
 				new RecipientEntry(onlinePlayer.getUUID(), onlinePlayer.getName().getString(), true));
+		}
+
+		// Mail is asynchronous: anyone who has EVER played is addressable, not
+		// just current mailbox owners and online players. The playerdata dir is
+		// the canonical roster; names resolve from the local usercache. Entries
+		// the cache cannot name (stale files, cleared cache) are skipped rather
+		// than shown as "Unknown".
+		try (java.util.stream.Stream<java.nio.file.Path> files = java.nio.file.Files.list(
+				server.getWorldPath(net.minecraft.world.level.storage.LevelResource.PLAYER_DATA_DIR))) {
+			files.filter(p -> p.getFileName().toString().endsWith(".dat")).forEach(p -> {
+				String base = p.getFileName().toString();
+				UUID uuid;
+				try {
+					uuid = UUID.fromString(base.substring(0, base.length() - 4));
+				} catch (IllegalArgumentException e) {
+					return;
+				}
+				if (uuid.equals(player.getUUID()) || recipients.containsKey(uuid)) return;
+				server.services().nameToIdCache().get(uuid).ifPresent(nameAndId ->
+					recipients.put(uuid, new RecipientEntry(uuid, nameAndId.name(), false)));
+			});
+		} catch (java.io.IOException e) {
+			// Roster stays owners+online on IO trouble; mail still works
 		}
 
 		return new ArrayList<>(recipients.values());

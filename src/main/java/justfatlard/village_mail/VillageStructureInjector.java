@@ -65,19 +65,23 @@ public class VillageStructureInjector {
 
 			LOGGER.info("Injecting biome-specific post offices...");
 
-			// Weight 5 for good chance of spawning
 			for (int i = 0; i < BIOMES.length; i++) {
 				String biome = BIOMES[i];
 				Identifier poolId = HOUSES_POOLS[i];
 				Identifier postOfficeId = Identifier.fromNamespaceAndPath(Main.MOD_ID, "post_office_" + biome);
 
+				// RIGID like every vanilla house: TERRAIN_MATCHING deforms the
+				// piece column-by-column to hug the ground, which is right for
+				// streets and farm plots and contorts a walled building
 				StructurePoolElement postOfficeElement = StructurePoolElement.legacy(
 					postOfficeId.toString()
-				).apply(StructureTemplatePool.Projection.TERRAIN_MATCHING);
+				).apply(StructureTemplatePool.Projection.RIGID);
 
 				StructureTemplatePool pool = poolRegistry.getValue(poolId);
 				if (pool != null) {
-					if (addElementToPool(pool, postOfficeElement, 5)) {
+					// Weight 1: jigsaw pool selection has no uniqueness, so higher
+					// weights make duplicate post offices in one village routine
+					if (addElementToPool(pool, postOfficeElement, 1)) {
 						LOGGER.info("Added " + biome + " post office to: " + poolId);
 					}
 				} else {

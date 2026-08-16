@@ -169,8 +169,15 @@ class StructureBuilder:
                     self.put(x, y, z, name, props)
 
     def save(self, path):
+        # Last write wins per position: builders overwrite decorative details
+        # over structural passes, and a template must not carry duplicate
+        # position entries (placement order would silently pick one)
+        by_pos = {}
+        for entry in self.blocks:
+            pos = tuple(entry[0][2][1])  # (9,'pos',(3,[x,y,z]))
+            by_pos[pos] = entry
         size = tuple(self.max)
-        write_structure(path, size, self.palette, self.blocks)
+        write_structure(path, size, self.palette, list(by_pos.values()))
 
 
 # ── Shared interior layout ────────────────────────────────────
@@ -221,15 +228,16 @@ def build_plains():
     b = StructureBuilder()
     W, D = 9, 9  # width (x), depth (z)
 
-    # y=0: cobblestone foundation pad (entrance jigsaw replaces the doorway block)
+    # y=0: cobblestone foundation pad
     for x in range(W):
         for z in range(D):
-            if (x, z) != (W//2, 0):
-                b.put(x, 0, z, 'minecraft:cobblestone')
+            b.put(x, 0, z, 'minecraft:cobblestone')
 
     # y=1: floor — cobblestone border, oak planks inside
     for x in range(W):
         for z in range(D):
+            if (x, z) == (W//2, 0):
+                continue
             if x == 0 or x == W-1 or z == 0 or z == D-1:
                 b.put(x, 1, z, 'minecraft:cobblestone')
             else:
@@ -270,9 +278,6 @@ def build_plains():
                     else:
                         b.put(x, y, z, 'minecraft:oak_planks')
 
-    # Interior
-    add_interior(b, W, D, carpet_z_start=2, carpet_z_end=6, mailbox_z=7)
-    b.put(1, 2, 7, 'minecraft:potted_cornflower')
 
     # y=4: log beam ring at top of walls
     for x in range(W):
@@ -306,8 +311,12 @@ def build_plains():
         for z in range(1, D-1):
             b.put(x, 6, z, 'minecraft:oak_slab', {'type': 'top'})
 
-    # Street-connection jigsaw in the foundation at the doorway
-    b.put_entrance_jigsaw(W//2, 0, 0, 'plains', 'minecraft:cobblestone')
+    # Street-connection jigsaw in the floor row at the doorway (grade row:
+    # door lower sits one row above it, the vanilla house convention)
+    # Interior (last: decor wins over structural passes)
+    add_interior(b, W, D, carpet_z_start=2, carpet_z_end=6, mailbox_z=7)
+    b.put(1, 2, 7, 'minecraft:potted_cornflower')
+    b.put_entrance_jigsaw(W//2, 1, 0, 'plains', 'minecraft:cobblestone')
 
     b.save('src/main/resources/data/village-mail/structure/post_office_plains.nbt')
 
@@ -322,15 +331,16 @@ def build_desert():
     b = StructureBuilder()
     W, D = 9, 9
 
-    # y=0: sandstone foundation (entrance jigsaw replaces the doorway block)
+    # y=0: sandstone foundation
     for x in range(W):
         for z in range(D):
-            if (x, z) != (W//2, 0):
-                b.put(x, 0, z, 'minecraft:sandstone')
+            b.put(x, 0, z, 'minecraft:sandstone')
 
     # y=1: floor — cut sandstone border, smooth sandstone interior
     for x in range(W):
         for z in range(D):
+            if (x, z) == (W//2, 0):
+                continue
             if x == 0 or x == W-1 or z == 0 or z == D-1:
                 b.put(x, 1, z, 'minecraft:cut_sandstone')
             else:
@@ -362,7 +372,6 @@ def build_desert():
                     b.put(x, y, z, wall_block)
 
     # Interior (desert ceiling is at y=4, so lantern hangs from y=3)
-    add_interior(b, W, D, carpet_z_start=2, carpet_z_end=6, mailbox_z=7, lantern_y=3)
     b.put(1, 2, 7, 'minecraft:potted_dead_bush')
     b.put(7, 2, 7, 'minecraft:potted_cactus')
 
@@ -382,7 +391,9 @@ def build_desert():
         b.put(0, 5, z, 'minecraft:cut_sandstone')
         b.put(W-1, 5, z, 'minecraft:cut_sandstone')
 
-    b.put_entrance_jigsaw(W//2, 0, 0, 'desert', 'minecraft:sandstone')
+    # Interior (last: decor wins over structural passes)
+    add_interior(b, W, D, carpet_z_start=2, carpet_z_end=6, mailbox_z=7, lantern_y=3)
+    b.put_entrance_jigsaw(W//2, 1, 0, 'desert', 'minecraft:cut_sandstone')
     b.save('src/main/resources/data/village-mail/structure/post_office_desert.nbt')
 
 
@@ -400,12 +411,13 @@ def build_savanna():
     # entrance jigsaw replaces the doorway block)
     for x in range(W):
         for z in range(D):
-            if (x, z) != (W//2, 0):
-                b.put(x, 0, z, 'minecraft:cobblestone')
+            b.put(x, 0, z, 'minecraft:cobblestone')
 
     # y=1: acacia plank floor
     for x in range(W):
         for z in range(D):
+            if (x, z) == (W//2, 0):
+                continue
             if x == 0 or x == W-1 or z == 0 or z == D-1:
                 b.put(x, 1, z, 'minecraft:orange_terracotta')
             else:
@@ -437,7 +449,6 @@ def build_savanna():
                     else:
                         b.put(x, y, z, 'minecraft:acacia_planks')
 
-    add_interior(b, W, D, carpet_z_start=2, carpet_z_end=6, mailbox_z=7)
 
     # y=4: acacia log beam ring
     for x in range(W):
@@ -470,7 +481,9 @@ def build_savanna():
         for z in range(1, D-1):
             b.put(x, 6, z, 'minecraft:acacia_slab', {'type': 'top'})
 
-    b.put_entrance_jigsaw(W//2, 0, 0, 'savanna', 'minecraft:cobblestone')
+    # Interior (last: decor wins over structural passes)
+    add_interior(b, W, D, carpet_z_start=2, carpet_z_end=6, mailbox_z=7)
+    b.put_entrance_jigsaw(W//2, 1, 0, 'savanna', 'minecraft:orange_terracotta')
     b.save('src/main/resources/data/village-mail/structure/post_office_savanna.nbt')
 
 
@@ -488,12 +501,13 @@ def build_snowy():
     # entrance jigsaw replaces the doorway block)
     for x in range(W):
         for z in range(D):
-            if (x, z) != (W//2, 0):
-                b.put(x, 0, z, 'minecraft:cobblestone')
+            b.put(x, 0, z, 'minecraft:cobblestone')
 
     # y=1: floor — packed ice border, spruce planks inside
     for x in range(W):
         for z in range(D):
+            if (x, z) == (W//2, 0):
+                continue
             if x == 0 or x == W-1 or z == 0 or z == D-1:
                 b.put(x, 1, z, 'minecraft:packed_ice')
             else:
@@ -523,7 +537,6 @@ def build_snowy():
                     else:
                         b.put(x, y, z, 'minecraft:spruce_planks')
 
-    add_interior(b, W, D, carpet_z_start=2, carpet_z_end=6, mailbox_z=7)
     # White carpet instead of cornflower for snowy
     b.put(1, 2, 1, 'minecraft:white_carpet')
     b.put(7, 2, 1, 'minecraft:white_carpet')
@@ -563,7 +576,9 @@ def build_snowy():
         for z in range(1, D-1):
             b.put(x, 7, z, 'minecraft:snow', {'layers': '3'})
 
-    b.put_entrance_jigsaw(W//2, 0, 0, 'snowy', 'minecraft:cobblestone')
+    # Interior (last: decor wins over structural passes)
+    add_interior(b, W, D, carpet_z_start=2, carpet_z_end=6, mailbox_z=7)
+    b.put_entrance_jigsaw(W//2, 1, 0, 'snowy', 'minecraft:packed_ice')
     b.save('src/main/resources/data/village-mail/structure/post_office_snowy.nbt')
 
 
@@ -582,8 +597,6 @@ def build_taiga():
     # entrance jigsaw replaces the doorway block, which the pattern makes plain cobble)
     for x in range(W):
         for z in range(D):
-            if (x, z) == (W//2, 0):
-                continue
             if (x + z) % 3 == 0:
                 b.put(x, 0, z, 'minecraft:mossy_cobblestone')
             else:
@@ -592,6 +605,8 @@ def build_taiga():
     # y=1: floor — cobblestone border (some mossy), spruce planks inside
     for x in range(W):
         for z in range(D):
+            if (x, z) == (W//2, 0):
+                continue
             if x == 0 or x == W-1 or z == 0 or z == D-1:
                 if (x + z) % 4 == 0:
                     b.put(x, 1, z, 'minecraft:mossy_cobblestone')
@@ -637,7 +652,6 @@ def build_taiga():
                     else:
                         b.put(x, y, z, 'minecraft:spruce_planks')
 
-    add_interior(b, W, D, carpet_z_start=2, carpet_z_end=6, mailbox_z=7)
     b.put(1, 2, 7, 'minecraft:potted_fern')
 
     # y=4: spruce log beam ring with vertical corners
@@ -671,7 +685,9 @@ def build_taiga():
         for z in range(1, D-1):
             b.put(x, 6, z, 'minecraft:spruce_slab', {'type': 'top'})
 
-    b.put_entrance_jigsaw(W//2, 0, 0, 'taiga', 'minecraft:cobblestone')
+    # Interior (last: decor wins over structural passes)
+    add_interior(b, W, D, carpet_z_start=2, carpet_z_end=6, mailbox_z=7)
+    b.put_entrance_jigsaw(W//2, 1, 0, 'taiga', 'minecraft:cobblestone')
     b.save('src/main/resources/data/village-mail/structure/post_office_taiga.nbt')
 
 

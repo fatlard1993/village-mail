@@ -1,5 +1,8 @@
 package justfatlard.village_mail;
 
+import justfatlard.pandorical.api.BlockRegistration;
+import justfatlard.pandorical.api.ItemRegistration;
+import justfatlard.pandorical.api.PandoricalApi;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -99,6 +102,22 @@ public class Main implements ModInitializer {
 
 	@Override
 	public void onInitialize() {
+		// Mirror the mailboxes into Pandorical's content registry. Both use the default
+		// stone-sounding Properties.of(), so the client copies stone to stay in step.
+		PandoricalApi.content().registerBlock(MOD_ID + ":mailbox", new BlockRegistration()
+			.baseBlock("minecraft:stone")
+			.property("facing")
+			.model(MOD_ID + ":block/mailbox"));
+		PandoricalApi.content().registerBlock(MOD_ID + ":public_mailbox", new BlockRegistration()
+			.baseBlock("minecraft:stone")
+			.property("facing")
+			.model(MOD_ID + ":block/public_mailbox"));
+		PandoricalApi.content().registerItem(MOD_ID + ":mailbox", new ItemRegistration()
+			.model(MOD_ID + ":block/mailbox"));
+		PandoricalApi.content().registerItem(MOD_ID + ":public_mailbox", new ItemRegistration()
+			.model(MOD_ID + ":block/public_mailbox"));
+		PandoricalApi.content().registerModAssets(MOD_ID);
+
 		Registry.register(BuiltInRegistries.BLOCK, MAILBOX_ID, MAILBOX_BLOCK);
 		Registry.register(BuiltInRegistries.BLOCK, PUBLIC_MAILBOX_ID, PUBLIC_MAILBOX_BLOCK);
 
