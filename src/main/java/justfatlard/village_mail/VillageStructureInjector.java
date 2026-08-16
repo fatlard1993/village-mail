@@ -22,6 +22,16 @@ public class VillageStructureInjector {
 	// Weight 5 produced two in one village; weight 1 produced almost none.
 	private static final int POST_OFFICE_WEIGHT = 3;
 
+	/**
+	 * How many times each existing decor entry is repeated before the public
+	 * mailbox is added, so that one entry is a small share rather than an eighth.
+	 * Raising this makes street mailboxes rarer; lowering it makes them common.
+	 *
+	 * <p>This mutates a shared vanilla pool, so a mod injecting into decor after
+	 * us is diluted by the same factor. Nothing else in this suite touches decor.
+	 */
+	private static final int DECOR_DILUTION = 4;
+
 	private static boolean injected = false;
 
 	// Houses pools - buildings that spawn in villages
@@ -92,10 +102,20 @@ public class VillageStructureInjector {
 				}
 			}
 
-			// Weight 1 for 1-2 per village
+			// Weight 1 is not "rare" in a decor pool: vanilla's plains decor totals
+			// only 7 weight across 5 entries, so one more entry is an eighth of
+			// every decor slot, and a village fills dozens of them. That is how a
+			// town ended up with a mailbox on every corner.
+			//
+			// Integer weights cannot express a small enough share on their own, so
+			// the pool is scaled up first: each existing entry is repeated
+			// DECOR_DILUTION times, then the mailbox goes in once. Plains becomes
+			// 7*4 + 1 = 29, or ~3.4% per slot, which lands about one per village.
+			// Every vanilla entry keeps its share of the rest exactly.
 			for (Identifier poolId : DECOR_POOLS) {
 				StructureTemplatePool pool = poolRegistry.getValue(poolId);
 				if (pool != null) {
+					dilutePool(pool, DECOR_DILUTION);
 					if (addElementToPool(pool, publicMailboxElement, 1)) {
 						LOGGER.info("Added public mailbox to: " + poolId);
 					}
@@ -106,6 +126,34 @@ public class VillageStructureInjector {
 
 			LOGGER.info("Village mail structures configured");
 		});
+	}
+
+	/**
+	 * Repeat every entry already in a pool {@code factor} times, so a single new
+	 * entry added afterwards lands at a smaller share than an integer weight of 1
+	 * could otherwise express. Relative odds among the existing entries are
+	 * unchanged; only the denominator grows.
+	 *
+	 * <p>Touches the flattened selection list only. {@code rawTemplates} keeps the
+	 * original weights, so a datapack reload serializes the pool as it was rather
+	 * than baking the scaling in permanently.
+	 */
+	@SuppressWarnings("unchecked")
+	private static void dilutePool(StructureTemplatePool pool, int factor) {
+		if (factor <= 1) return;
+		try {
+			Field templatesField = StructureTemplatePool.class.getDeclaredField("templates");
+			templatesField.setAccessible(true);
+			ObjectArrayList<StructurePoolElement> elements =
+				(ObjectArrayList<StructurePoolElement>) templatesField.get(pool);
+
+			List<StructurePoolElement> original = new ArrayList<>(elements);
+			for (int i = 1; i < factor; i++) {
+				elements.addAll(original);
+			}
+		} catch (Exception e) {
+			LOGGER.error("Failed to scale decor pool; public mailboxes will be common: " + e.getMessage());
+		}
 	}
 
 	/**
