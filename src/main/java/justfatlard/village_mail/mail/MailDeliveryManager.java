@@ -30,7 +30,9 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 
 import justfatlard.village_mail.Main;
@@ -512,7 +514,33 @@ public class MailDeliveryManager {
 	 * Send obituary letters to player mailboxes near a villager that just died.
 	 * Delivered with a short delay; the mail person needs a moment to write it up.
 	 */
+	/**
+	 * Villagers who died and immediately came back as something curable.
+	 *
+	 * <p>Vanilla converts a villager to a zombie villager in {@code killedEntity},
+	 * which runs *after* the villager has died, so a death event has already
+	 * fired by then. On normal difficulty it is a coin flip whether a zombie kill
+	 * converts or kills outright, which means half of all zombie "deaths" were
+	 * being mourned for someone standing in the village a cure later.
+	 */
+	private final Set<UUID> convertedNotDead = ConcurrentHashMap.newKeySet();
+
+	/** Called from the conversion event; see {@link #convertedNotDead}. */
+	public void noteConverted(UUID villagerUuid) {
+		convertedNotDead.add(villagerUuid);
+	}
+
 	public void sendObituaries(Villager villager, DamageSource damageSource, MinecraftServer server) {
+		// Held a tick so the conversion, which happens after the death, has had its
+		// say. Zombification is not a death: they can be cured and walk back in.
+		UUID villagerUuid = villager.getUUID();
+		scheduleDelayed(server, 2, () -> {
+			if (convertedNotDead.remove(villagerUuid)) return;
+			sendObituariesNow(villager, damageSource, server);
+		});
+	}
+
+	private void sendObituariesNow(Villager villager, DamageSource damageSource, MinecraftServer server) {
 		String dimension = villager.level().dimension().identifier().toString();
 		BlockPos deathPos = villager.blockPosition();
 		String villagerName = villager.getName().getString();

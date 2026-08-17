@@ -161,6 +161,14 @@ public class Main implements ModInitializer {
 		ServerTickEvents.END_SERVER_TICK.register(MAIL_MANAGER::tick);
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> MAIL_MANAGER.reset());
 
+		// Zombification runs after the death event, so the obituary has to be told
+		// the "dead" villager is coming back. See MailDeliveryManager.convertedNotDead.
+		ServerLivingEntityEvents.MOB_CONVERSION.register((previous, converted, params) -> {
+			if (previous instanceof Villager villager) {
+				MAIL_MANAGER.noteConverted(villager.getUUID());
+			}
+		});
+
 		ServerLivingEntityEvents.AFTER_DEATH.register((entity, damageSource) -> {
 			if (entity instanceof Villager villager && !villager.level().isClientSide()) {
 				var server = villager.level().getServer();
