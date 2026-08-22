@@ -1,0 +1,24 @@
+{
+  "display": {
+    "icon": {
+      "id": "minecraft:emerald"
+    },
+    "title": "Neighbours",
+    "description": "Take an interest in somebody else's town",
+    "show_toast": true,
+    "announce_to_chat": true,
+    "background": "minecraft:textures/block/cobblestone.png"
+  },
+  "criteria": {
+    "emerald": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [
+          {
+            "items": "minecraft:emerald"
+          }
+        ]
+      }
+    }
+  }
+}
