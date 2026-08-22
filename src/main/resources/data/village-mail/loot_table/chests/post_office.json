@@ -1,0 +1,107 @@
+{
+	"type": "minecraft:chest",
+	"pools": [
+		{
+			"entries": [
+				{
+					"type": "minecraft:item",
+					"modifier": {
+						"type": "minecraft:set_count",
+						"count": {
+							"type": "minecraft:uniform",
+							"max": 6.0,
+							"min": 2.0
+						}
+					},
+					"name": "minecraft:paper",
+					"weight": 20
+				},
+				{
+					"type": "minecraft:item",
+					"modifier": {
+						"type": "minecraft:set_count",
+						"count": {
+							"type": "minecraft:uniform",
+							"max": 3.0,
+							"min": 1.0
+						}
+					},
+					"name": "minecraft:feather",
+					"weight": 10
+				},
+				{
+					"type": "minecraft:item",
+					"name": "minecraft:ink_sac",
+					"weight": 10
+				},
+				{
+					"type": "minecraft:item",
+					"modifier": {
+						"type": "minecraft:set_count",
+						"count": {
+							"type": "minecraft:uniform",
+							"max": 2.0,
+							"min": 1.0
+						}
+					},
+					"name": "minecraft:book",
+					"weight": 8
+				},
+				{
+					"type": "minecraft:item",
+					"name": "minecraft:map",
+					"weight": 6
+				},
+				{
+					"type": "minecraft:item",
+					"modifier": {
+						"type": "minecraft:set_count",
+						"count": {
+							"type": "minecraft:uniform",
+							"max": 3.0,
+							"min": 1.0
+						}
+					},
+					"name": "minecraft:bread",
+					"weight": 10
+				},
+				{
+					"type": "minecraft:item",
+					"modifier": {
+						"type": "minecraft:set_count",
+						"count": {
+							"type": "minecraft:uniform",
+							"max": 2.0,
+							"min": 1.0
+						}
+					},
+					"name": "minecraft:emerald",
+					"weight": 4
+				}
+			],
+			"rolls": {
+				"type": "minecraft:uniform",
+				"max": 5.0,
+				"min": 2.0
+			}
+		},
+		{
+			"entries": [
+				{
+					"type": "minecraft:item",
+					"modifier": {
+						"type": "minecraft:set_count",
+						"count": 1.0
+					},
+					"name": "minecraft:bundle"
+				},
+				{
+					"type": "minecraft:empty",
+					"weight": 3
+				}
+			],
+			"rolls": 1.0
+		}
+	],
+	"random_sequence": "village-mail:chests/post_office"
+}

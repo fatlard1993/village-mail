@@ -7,6 +7,7 @@ import justfatlard.pandorical.api.PandoricalApi;
 import justfatlard.pandorical.api.ScreenApi;
 import justfatlard.pandorical.api.ScreenBuilder;
 import justfatlard.pandorical.protocol.ComponentUpdate;
+import justfatlard.pandorical.protocol.OpenScreenS2C;
 
 import justfatlard.village_mail.Main;
 import justfatlard.village_mail.integration.VillageBuilderIntegration;
@@ -62,6 +63,44 @@ public final class MailScreens {
 	private static final int VISIBLE_MESSAGES = 5;
 	private static final long SEND_COOLDOWN_MS = 1000;
 
+	// Vanilla container metrics. A mailbox is a thing you open next to a chest, so it
+	// is built on the same grid: 176 wide, an 8px margin, labels in #404040 ink on the
+	// default panel - Pandorical's panel with no props is exactly the vanilla one, and
+	// its slot rendering assumes that light background. The dark translucent panels
+	// this used to carry read as an overlay laid over the game rather than part of it.
+	private static final int SCREEN_W = 176;
+	private static final int MARGIN = 8;
+	private static final int CONTENT_W = SCREEN_W - MARGIN * 2;
+	private static final int RIGHT = SCREEN_W - MARGIN;
+	private static final int TITLE_Y = 6;
+	/** Vanilla's own label colour, used for titles and anything read as a label. */
+	private static final String INK = "#404040";
+	private static final String INK_BODY = "#555555";
+	private static final String INK_MUTED = "#7F7F7F";
+	private static final String INK_GOOD = "#2D5A1F";
+	/** Vanilla screen furniture: no props at all is the inventory's own panel. */
+	private static final Map<String, String> PANEL = Map.of();
+
+	// Message list geometry: five rows between the tab strip and the compose button.
+	private static final int MAILBOX_H = 184;
+	private static final int ROW_TOP = 42;
+	private static final int ROW_PITCH = 22;
+	private static final int ROW_W = CONTENT_W - 20;
+	private static final int DETAIL_H = 184;
+	private static final int BULLETIN_H = 178;
+	// The player's inventory keeps vanilla's own spacing: 3x9 grid, hotbar 58 below it,
+	// 8px of panel under that. Compose and the public mailbox are the same kind of
+	// screen - address, message, attachment, inventory - so they are the same height.
+	private static final int PLAYER_INV_Y = 96;
+	private static final int CONTAINER_H = PLAYER_INV_Y + 58 + 18 + MARGIN;
+	private static final int COMPOSE_H = CONTAINER_H;
+	private static final int PUBLIC_H = CONTAINER_H;
+
+	/** Right-aligned x for a line of text, on the 6px-per-character grid the font uses. */
+	private static int rightAlign(String text) {
+		return Math.max(MARGIN, RIGHT - text.length() * 6);
+	}
+
 	private static final DateTimeFormatter DATE_FORMAT =
 		DateTimeFormatter.ofPattern("MMM d, HH:mm").withZone(ZoneId.systemDefault());
 
@@ -73,9 +112,11 @@ public final class MailScreens {
 
 	private static final class ComposeSession {
 		ComposeMode mode;
+		SimpleContainer container;
 		List<RecipientEntry> recipients;
 		int selectedIndex;
 		String body;
+		boolean consumed;
 	}
 
 	private static final class PublicMailboxSession {
@@ -137,7 +178,10 @@ public final class MailScreens {
 			if (session != null) session.body = d.getOrDefault("text", "");
 		});
 		screens.onAction(SCREEN_COMPOSE, "send_btn", (p, d) -> sendComposeMessage(p));
-		screens.onClose(SCREEN_COMPOSE, p -> composeSessions.remove(p.getUUID()));
+		// Teardown belongs to the container callback alone, not to onClose as well:
+		// it is the one that runs on every way out (escape, disconnect, another
+		// screen taking over) and the only one that can still reach the attachment.
+		screens.onContainerRemoved(SCREEN_COMPOSE, MailScreens::returnUnconsumedCompose);
 
 		// --- Public mailbox ---
 		screens.onAction(SCREEN_PUBLIC_MAILBOX, "prev_btn", (p, d) -> navigatePublicMailbox(p, -1));
@@ -158,12 +202,17 @@ public final class MailScreens {
 		screens.onContainerRemoved(SCREEN_PUBLIC_MAILBOX, MailScreens::returnUnconsumedAttachment);
 	}
 
+	/**
+	 * Drop the state that is only a view, and leave the two sessions that hold an item
+	 * alone: quitting closes the player's container, and that teardown is what puts an
+	 * unsent attachment back in their inventory before it is saved. Clearing those here
+	 * would race it, and winning the race destroys the item. Whichever entry the
+	 * teardown does not reach is replaced the next time the player opens a mailbox.
+	 */
 	public static void onPlayerDisconnect(UUID uuid) {
 		mailboxSessions.remove(uuid);
 		detailMessage.remove(uuid);
 		detailParentShowingRead.remove(uuid);
-		composeSessions.remove(uuid);
-		publicMailboxSessions.remove(uuid);
 		lastSendTime.remove(uuid);
 	}
 
@@ -197,46 +246,48 @@ public final class MailScreens {
 		String title = Component.translatable("village-mail.screen.mailbox_title", ownerName).getString();
 
 		ScreenBuilder b = new ScreenBuilder(SCREEN_MAILBOX)
-			.size(220, 210)
+			.size(SCREEN_W, MAILBOX_H)
 			.title(title)
-			.panel("bg", 0, 0, 220, 210, Map.of(ComponentType.PROP_BACKGROUND, "#CC1E1E1E", ComponentType.PROP_BORDER, "beveled"))
-			.text("title", 10, 8, Map.of(ComponentType.PROP_TEXT, title, ComponentType.PROP_SHADOW, "true"));
+			.panel("bg", 0, 0, SCREEN_W, MAILBOX_H, PANEL)
+			.text("title", MARGIN, TITLE_Y, Map.of(ComponentType.PROP_TEXT, title, ComponentType.PROP_COLOR, INK));
 
-		if (unreadCount > 0) {
-			String unreadText = Component.translatable("village-mail.screen.unread_count", unreadCount).getString();
-			b.text("unread_count", Math.max(10, 210 - unreadText.length() * 6), 8,
-				Map.of(ComponentType.PROP_TEXT, unreadText, ComponentType.PROP_COLOR, "#CC0000"));
-		}
+		// The count rides on the tab it counts rather than competing with the title
+		// for the top row, where a long owner name used to run into it.
+		String newTabLabel = Component.translatable("village-mail.screen.tab_new").getString();
+		if (unreadCount > 0) newTabLabel = newTabLabel + " (" + unreadCount + ")";
 
-		b.button("tab_new", 10, 24, 55, 16, Map.of(
-			ComponentType.PROP_LABEL_KEY, "village-mail.screen.tab_new",
+		int tabWidth = (CONTENT_W - 4) / 2;
+		b.button("tab_new", MARGIN, 20, tabWidth, 16, Map.of(
+			ComponentType.PROP_LABEL, newTabLabel,
 			ComponentType.PROP_ENABLED, String.valueOf(showingRead)));
-		b.button("tab_read", 68, 24, 55, 16, Map.of(
+		b.button("tab_read", MARGIN + tabWidth + 4, 20, tabWidth, 16, Map.of(
 			ComponentType.PROP_LABEL_KEY, "village-mail.screen.tab_read",
 			ComponentType.PROP_ENABLED, String.valueOf(!showingRead)));
-		b.button("compose_btn", 152, 188, 58, 16, Map.of(
+		b.button("compose_btn", RIGHT - 76, MAILBOX_H - 26, 76, 18, Map.of(
 			ComponentType.PROP_LABEL_KEY, "village-mail.screen.compose"));
 
-		int rowY = 48;
+		int rowY = ROW_TOP;
 		for (int i = 0; i < visibleSlice.size(); i++) {
 			MailMessage msg = visibleSlice.get(i);
 			String label = msg.getSenderName() != null ? msg.getSenderName() : "Unknown";
 			if (label.length() > 16) label = label.substring(0, 13) + "...";
 			if (msg.hasAttachments()) label = label + " ✉";
-			b.button("msg_slot_" + i, 10, rowY, 178, 20, Map.of(ComponentType.PROP_LABEL, label));
-			rowY += 22;
+			b.button("msg_slot_" + i, MARGIN, rowY, ROW_W, 20, Map.of(ComponentType.PROP_LABEL, label));
+			rowY += ROW_PITCH;
 		}
 
-		b.button("scroll_up", 192, 48, 16, 14, Map.of(
+		int scrollX = MARGIN + ROW_W + 4;
+		b.button("scroll_up", scrollX, ROW_TOP, 16, 14, Map.of(
 			ComponentType.PROP_LABEL, "^", ComponentType.PROP_ENABLED, String.valueOf(clampedScroll > 0)));
-		b.button("scroll_down", 192, 48 + VISIBLE_MESSAGES * 22 - 14, 16, 14, Map.of(
+		b.button("scroll_down", scrollX, ROW_TOP + VISIBLE_MESSAGES * ROW_PITCH - 16, 16, 14, Map.of(
 			ComponentType.PROP_LABEL, "v", ComponentType.PROP_ENABLED, String.valueOf(clampedScroll < maxScroll)));
 
 		if (messages.isEmpty()) {
 			String emptyKey = showingRead ? "village-mail.screen.no_read_messages" : "village-mail.screen.no_new_messages";
-			b.text("empty", 60, 90, Map.of(
-				ComponentType.PROP_TEXT, Component.translatable(emptyKey).getString(),
-				ComponentType.PROP_COLOR, "#808080"));
+			String emptyText = Component.translatable(emptyKey).getString();
+			b.text("empty", Math.max(MARGIN, (SCREEN_W - emptyText.length() * 6) / 2), 80, Map.of(
+				ComponentType.PROP_TEXT, emptyText,
+				ComponentType.PROP_COLOR, INK_MUTED));
 		}
 
 		PandoricalApi.screens().open(player, b.build());
@@ -290,16 +341,16 @@ public final class MailScreens {
 
 	private static void renderDetail(ServerPlayer player, MailMessage message) {
 		ScreenBuilder b = new ScreenBuilder(SCREEN_DETAIL)
-			.size(240, 210)
+			.size(SCREEN_W, DETAIL_H)
 			.title(Component.translatable("village-mail.screen.message_title").getString())
-			.panel("bg", 0, 0, 240, 210, Map.of(ComponentType.PROP_BACKGROUND, "#CCF5E6D3", ComponentType.PROP_BORDER, "beveled"))
-			.button("back", 8, 6, 50, 16, Map.of(ComponentType.PROP_LABEL_KEY, "village-mail.screen.back"))
-			.button("delete", 182, 6, 50, 16, Map.of(ComponentType.PROP_LABEL_KEY, "village-mail.screen.delete"));
+			.panel("bg", 0, 0, SCREEN_W, DETAIL_H, PANEL)
+			.button("back", MARGIN, TITLE_Y - 2, 46, 16, Map.of(ComponentType.PROP_LABEL_KEY, "village-mail.screen.back"))
+			.button("delete", RIGHT - 46, TITLE_Y - 2, 46, 16, Map.of(ComponentType.PROP_LABEL_KEY, "village-mail.screen.delete"));
 
 		String senderName = message.getSenderName() != null ? message.getSenderName() : "Unknown";
 		String senderLabel = Component.translatable("village-mail.screen.from", senderName).getString();
-		b.text("sender_label", 12, 30, Map.of(ComponentType.PROP_TEXT, senderLabel, ComponentType.PROP_COLOR, "#3B2D1F"));
-		b.text("time_label", 12, 42, Map.of(ComponentType.PROP_TEXT, formatTimestamp(message.getTimestamp()), ComponentType.PROP_COLOR, "#6B5B4F"));
+		b.text("sender_label", MARGIN, 28, Map.of(ComponentType.PROP_TEXT, senderLabel, ComponentType.PROP_COLOR, INK));
+		b.text("time_label", MARGIN, 40, Map.of(ComponentType.PROP_TEXT, formatTimestamp(message.getTimestamp()), ComponentType.PROP_COLOR, INK_MUTED));
 
 		if (message.getType() != MailMessage.MessageType.PLAYER) {
 			String badgeKey = switch (message.getType()) {
@@ -311,27 +362,27 @@ public final class MailScreens {
 			String badgeText = badgeKey != null
 				? Component.translatable(badgeKey).getString()
 				: "[" + message.getType() + "]";
-			b.text("type_badge", 170, 30, Map.of(ComponentType.PROP_TEXT, badgeText, ComponentType.PROP_COLOR, "#8B7B6F"));
+			b.text("type_badge", rightAlign(badgeText), 28, Map.of(ComponentType.PROP_TEXT, badgeText, ComponentType.PROP_COLOR, INK_MUTED));
 		}
 
 		if (message.hasAttachments()) {
 			String attachText = message.isItemsCollected()
 				? Component.translatable("village-mail.screen.items_collected").getString()
 				: Component.translatable("village-mail.screen.attachment_count", message.getAttachments().size()).getString();
-			String attachColor = message.isItemsCollected() ? "#6B5B4F" : "#2D5A1F";
-			b.text("attach_info", 12, 54, Map.of(ComponentType.PROP_TEXT, attachText, ComponentType.PROP_COLOR, attachColor));
+			String attachColor = message.isItemsCollected() ? INK_MUTED : INK_GOOD;
+			b.text("attach_info", MARGIN, 52, Map.of(ComponentType.PROP_TEXT, attachText, ComponentType.PROP_COLOR, attachColor));
 		}
 
-		b.text("body", 12, 70, Map.of(
+		b.text("body", MARGIN, 66, Map.of(
 			ComponentType.PROP_TEXT, message.getBody(),
-			ComponentType.PROP_COLOR, "#3B2D1F",
-			ComponentType.PROP_WRAP_WIDTH, "216",
-			ComponentType.PROP_MAX_LINES, "10"
+			ComponentType.PROP_COLOR, INK_BODY,
+			ComponentType.PROP_WRAP_WIDTH, String.valueOf(CONTENT_W),
+			ComponentType.PROP_MAX_LINES, "7"
 		));
 
-		int buttonX = 8;
-		int buttonY = 186;
-		int buttonWidth = 70;
+		int buttonX = MARGIN;
+		int buttonY = DETAIL_H - 24;
+		int buttonWidth = 76;
 		for (MessageButton button : message.getButtons()) {
 			if (button.getType() == MessageButton.ButtonType.COLLECT_ITEMS && message.isItemsCollected()) continue;
 			if (button.getType() == MessageButton.ButtonType.REPLY && message.getSenderUuid() == null) continue;
@@ -343,8 +394,8 @@ public final class MailScreens {
 			b.button("msgbtn:" + button.getId(), buttonX, buttonY, buttonWidth, 18, Map.of(ComponentType.PROP_LABEL, label));
 
 			buttonX += buttonWidth + 4;
-			if (buttonX + buttonWidth > 232) {
-				buttonX = 8;
+			if (buttonX + buttonWidth > RIGHT) {
+				buttonX = MARGIN;
 				buttonY -= 22;
 			}
 		}
@@ -442,21 +493,24 @@ public final class MailScreens {
 
 		ComposeSession session = new ComposeSession();
 		session.mode = mode;
+		session.container = new SimpleContainer(1);
 		session.recipients = recipients;
 		session.selectedIndex = 0;
 		session.body = "";
+		session.consumed = false;
 		if (mode == ComposeMode.FORWARD && prefillBody != null) {
 			session.body = Component.translatable("village-mail.screen.forwarded_prefix").getString() + "\n" + prefillBody;
 		}
 
+		// Open first, register second. openContainer tears down whatever menu the
+		// player had, and that teardown looks this player's session up by UUID: with
+		// the new session already in the map, the outgoing screen's handler cleans up
+		// the one just built and leaves a live screen with no state behind it.
+		PandoricalApi.screens().openContainer(player, buildComposeScreen(session), session.container, Set.of());
 		composeSessions.put(player.getUUID(), session);
-		renderCompose(player);
 	}
 
-	private static void renderCompose(ServerPlayer player) {
-		ComposeSession session = composeSessions.get(player.getUUID());
-		if (session == null) return;
-
+	private static OpenScreenS2C buildComposeScreen(ComposeSession session) {
 		String titleKey = switch (session.mode) {
 			case REPLY -> "village-mail.screen.title_reply";
 			case FORWARD -> "village-mail.screen.title_forward";
@@ -470,28 +524,39 @@ public final class MailScreens {
 			: displayName(selected);
 		String countText = session.recipients.isEmpty() ? "" : (session.selectedIndex + 1) + "/" + session.recipients.size();
 
-		ScreenBuilder b = new ScreenBuilder(SCREEN_COMPOSE)
-			.size(240, 200)
+		// Same shape as the public mailbox: address, message, an attachment slot, and
+		// the player's own inventory to drag from. The text field is a vanilla EditBox
+		// and holds one line however tall it is drawn, so it is drawn one line tall.
+		return new ScreenBuilder(SCREEN_COMPOSE)
+			.size(SCREEN_W, COMPOSE_H)
 			.title(titleText)
-			.panel("bg", 0, 0, 240, 200, Map.of(ComponentType.PROP_BACKGROUND, "#CC1E1E1E", ComponentType.PROP_BORDER, "beveled"))
-			.text("title", 90, 8, Map.of(ComponentType.PROP_TEXT, titleText, ComponentType.PROP_SHADOW, "true"))
-			.button("cancel_btn", 8, 6, 50, 16, Map.of(ComponentType.PROP_LABEL_KEY, "village-mail.screen.cancel"))
-			.button("prev_btn", 8, 26, 20, 20, Map.of(
+			.container(1, true)
+			.panel("bg", 0, 0, SCREEN_W, COMPOSE_H, PANEL)
+			.text("title", MARGIN, TITLE_Y, Map.of(ComponentType.PROP_TEXT, titleText, ComponentType.PROP_COLOR, INK))
+			.button("prev_btn", MARGIN, 22, 16, 18, Map.of(
 				ComponentType.PROP_LABEL, "<", ComponentType.PROP_ENABLED, String.valueOf(session.selectedIndex > 0)))
-			.button("next_btn", 212, 26, 20, 20, Map.of(
+			.button("next_btn", RIGHT - 16, 22, 16, 18, Map.of(
 				ComponentType.PROP_LABEL, ">", ComponentType.PROP_ENABLED, String.valueOf(session.selectedIndex < session.recipients.size() - 1)))
-			.text("recipient_name", 90, 32, Map.of(ComponentType.PROP_TEXT, recipientDisplay))
-			.text("recipient_count", 100, 48, Map.of(ComponentType.PROP_TEXT, countText, ComponentType.PROP_COLOR, "#808080"))
-			.text("message_label", 10, 60, Map.of(
-				ComponentType.PROP_TEXT, Component.translatable("village-mail.screen.message").getString()))
+			.text("recipient_name", 30, 24, Map.of(ComponentType.PROP_TEXT, recipientDisplay, ComponentType.PROP_COLOR, INK))
+			.text("recipient_count", 30, 34, Map.of(ComponentType.PROP_TEXT, countText, ComponentType.PROP_COLOR, INK_MUTED))
 			.component(new ComponentBuilder("body_input", ComponentType.TEXT_INPUT)
-				.bounds(10, 70, 220, 100)
+				.bounds(MARGIN, 46, CONTENT_W, 14)
 				.prop(ComponentType.PROP_VALUE, session.body)
 				.prop(ComponentType.PROP_MAX_LENGTH, String.valueOf(MailMessage.MAX_BODY_LENGTH))
+				.prop(ComponentType.PROP_PLACEHOLDER_KEY, "village-mail.screen.message")
 				.prop(ComponentType.PROP_EDITABLE, "true"))
-			.button("send_btn", 172, 176, 60, 18, Map.of(ComponentType.PROP_LABEL_KEY, "village-mail.screen.send"));
-
-		PandoricalApi.screens().open(player, b.build());
+			.text("attach_label", MARGIN, 68, Map.of(
+				ComponentType.PROP_TEXT, Component.translatable("village-mail.screen.attach").getString(),
+				ComponentType.PROP_COLOR, INK))
+			.inventoryGrid("attachment_slot", 50, 64, 1, 1, 0)
+			.button("cancel_btn", 76, 64, 44, 18, Map.of(ComponentType.PROP_LABEL_KEY, "village-mail.screen.cancel"))
+			.button("send_btn", RIGHT - 52, 64, 52, 18, Map.of(ComponentType.PROP_LABEL_KEY, "village-mail.screen.send"))
+			.text("inventory_label", MARGIN, PLAYER_INV_Y - 10, Map.of(
+				ComponentType.PROP_TEXT, Component.translatable("container.inventory").getString(),
+				ComponentType.PROP_COLOR, INK))
+			.inventoryGrid("player_inv", MARGIN, PLAYER_INV_Y, 3, 9, 1)
+			.inventoryGrid("hotbar", MARGIN, PLAYER_INV_Y + 58, 1, 9, 28)
+			.build();
 	}
 
 	private static void navigateCompose(ServerPlayer player, int delta) {
@@ -516,7 +581,7 @@ public final class MailScreens {
 	}
 
 	private static void cancelCompose(ServerPlayer player) {
-		composeSessions.remove(player.getUUID());
+		closeCompose(player);
 		returnToMailbox(player);
 	}
 
@@ -524,11 +589,34 @@ public final class MailScreens {
 		ComposeSession session = composeSessions.get(player.getUUID());
 		if (session == null || session.recipients.isEmpty()) return;
 		RecipientEntry recipient = session.recipients.get(session.selectedIndex);
-		boolean sent = trySendMail(player, recipient.uuid(), session.body, ItemStack.EMPTY);
+		ItemStack attachment = session.container.getItem(0).copy();
+		boolean sent = trySendMail(player, recipient.uuid(), session.body, attachment);
 		if (sent) {
-			composeSessions.remove(player.getUUID());
+			session.container.setItem(0, ItemStack.EMPTY);
+			session.consumed = true;
+			closeCompose(player);
 			returnToMailbox(player);
 		}
+	}
+
+	/**
+	 * Hand the compose menu back before opening the list over it.
+	 *
+	 * <p>The mailbox list is a plain screen, and opening one does not close a container
+	 * menu, so walking away from compose without this leaves the menu live on the server
+	 * with the attachment stranded inside it. Closing runs the removed-handler, which is
+	 * what returns the item and clears the session.
+	 */
+	private static void closeCompose(ServerPlayer player) {
+		String screenId = PandoricalApi.getOpenScreenId(player.getUUID());
+		if (screenId != null) PandoricalApi.screens().close(player, screenId);
+		composeSessions.remove(player.getUUID());
+	}
+
+	private static void returnUnconsumedCompose(ServerPlayer player) {
+		ComposeSession session = composeSessions.remove(player.getUUID());
+		if (session == null || session.consumed) return;
+		giveBack(player, session.container.getItem(0));
 	}
 
 	// ========================================================================
@@ -553,7 +641,6 @@ public final class MailScreens {
 		session.selectedIndex = 0;
 		session.body = "";
 		session.consumed = false;
-		publicMailboxSessions.put(player.getUUID(), session);
 
 		String title = Component.translatable("block.village-mail.public_mailbox").getString();
 		RecipientEntry selected = session.recipients.isEmpty() ? null : session.recipients.get(0);
@@ -561,34 +648,46 @@ public final class MailScreens {
 			? Component.translatable("village-mail.screen.no_players").getString()
 			: displayName(selected);
 
+		// Vanilla container layout: the player's own inventory in its usual place, the
+		// mailbox's business stacked above it, "Inventory" labelled the way every
+		// vanilla container labels it.
 		ScreenBuilder b = new ScreenBuilder(SCREEN_PUBLIC_MAILBOX)
-			.size(200, 200)
+			.size(SCREEN_W, PUBLIC_H)
 			.title(title)
 			.container(1, true)
-			.panel("bg", 0, 0, 200, 200, Map.of(ComponentType.PROP_BACKGROUND, "#CC1E1E1E", ComponentType.PROP_BORDER, "beveled"))
-			.text("title", 10, 6, Map.of(ComponentType.PROP_TEXT, title, ComponentType.PROP_SHADOW, "true"))
-			.button("prev_btn", 7, 20, 16, 18, Map.of(ComponentType.PROP_LABEL, "<", ComponentType.PROP_ENABLED, "false"))
-			.button("next_btn", 177, 20, 16, 18, Map.of(
+			.panel("bg", 0, 0, SCREEN_W, PUBLIC_H, PANEL)
+			.text("title", MARGIN, TITLE_Y, Map.of(ComponentType.PROP_TEXT, title, ComponentType.PROP_COLOR, INK))
+			// The board is the mailbox's other page, so it sits in the corner as a tab
+			// rather than taking a share of the row the send button needs.
+			.button("bulletin_btn", RIGHT - 76, 4, 76, 16, Map.of(
+				ComponentType.PROP_LABEL_KEY, "village-mail.screen.bulletin"))
+			.button("prev_btn", MARGIN, 24, 16, 18, Map.of(ComponentType.PROP_LABEL, "<", ComponentType.PROP_ENABLED, "false"))
+			.button("next_btn", RIGHT - 16, 24, 16, 18, Map.of(
 				ComponentType.PROP_LABEL, ">", ComponentType.PROP_ENABLED, String.valueOf(session.recipients.size() > 1)))
-			.text("recipient_name", 60, 24, Map.of(ComponentType.PROP_TEXT, recipientDisplay))
+			.text("recipient_name", 30, 28, Map.of(ComponentType.PROP_TEXT, recipientDisplay, ComponentType.PROP_COLOR, INK))
 			.component(new ComponentBuilder("body_input", ComponentType.TEXT_INPUT)
-				.bounds(8, 42, 184, 14)
+				.bounds(MARGIN, 46, CONTENT_W, 14)
 				.prop(ComponentType.PROP_VALUE, "")
 				.prop(ComponentType.PROP_MAX_LENGTH, String.valueOf(MailMessage.MAX_BODY_LENGTH))
 				.prop(ComponentType.PROP_PLACEHOLDER_KEY, "village-mail.screen.message"))
-			.text("attach_label", 8, 62, Map.of(
+			.text("attach_label", MARGIN, 68, Map.of(
 				ComponentType.PROP_TEXT, Component.translatable("village-mail.screen.attach").getString(),
-				ComponentType.PROP_COLOR, "#606060"))
-			.inventoryGrid("attachment_slot", 91, 60, 1, 1, 0)
-			.button("send_btn", 132, 82, 60, 16, Map.of(
+				ComponentType.PROP_COLOR, INK))
+			.inventoryGrid("attachment_slot", 50, 64, 1, 1, 0)
+			.button("send_btn", RIGHT - 52, 64, 52, 18, Map.of(
 				ComponentType.PROP_LABEL_KEY, "village-mail.screen.send",
 				ComponentType.PROP_ENABLED, String.valueOf(publicSendEnabled(session))))
-			.button("bulletin_btn", 8, 82, 76, 16, Map.of(
-				ComponentType.PROP_LABEL_KEY, "village-mail.screen.bulletin"))
-			.inventoryGrid("player_inv", 8, 108, 3, 9, 1)
-			.inventoryGrid("hotbar", 8, 166, 1, 9, 28);
+			.text("inventory_label", MARGIN, PLAYER_INV_Y - 10, Map.of(
+				ComponentType.PROP_TEXT, Component.translatable("container.inventory").getString(),
+				ComponentType.PROP_COLOR, INK))
+			.inventoryGrid("player_inv", MARGIN, PLAYER_INV_Y, 3, 9, 1)
+			.inventoryGrid("hotbar", MARGIN, PLAYER_INV_Y + 58, 1, 9, 28);
 
+		// Open first, register second: see openCompose. The teardown of whatever the
+		// player had open finds its session by UUID, so a session registered ahead of
+		// the call is the one it cleans up.
 		PandoricalApi.screens().openContainer(player, b.build(), session.container, Set.of());
+		publicMailboxSessions.put(player.getUUID(), session);
 	}
 
 	/**
@@ -604,40 +703,41 @@ public final class MailScreens {
 		String title = Component.translatable("village-mail.screen.bulletin_title").getString();
 
 		ScreenBuilder b = new ScreenBuilder(SCREEN_BULLETIN)
-			.size(200, 170)
+			.size(SCREEN_W, BULLETIN_H)
 			.title(title)
-			.panel("bg", 0, 0, 200, 170, Map.of(ComponentType.PROP_BACKGROUND, "#CC1E1E1E", ComponentType.PROP_BORDER, "beveled"))
-			.text("title", 10, 6, Map.of(ComponentType.PROP_TEXT, title, ComponentType.PROP_SHADOW, "true"))
-			.text("weather_head", 10, 24, Map.of(
+			.panel("bg", 0, 0, SCREEN_W, BULLETIN_H, PANEL)
+			.text("title", MARGIN, TITLE_Y, Map.of(ComponentType.PROP_TEXT, title, ComponentType.PROP_COLOR, INK))
+			.text("weather_head", MARGIN, 24, Map.of(
 				ComponentType.PROP_TEXT, Component.translatable("village-mail.bulletin.weather").getString(),
-				ComponentType.PROP_COLOR, "#FFD27F"))
-			.text("weather_body", 10, 36, Map.of(
+				ComponentType.PROP_COLOR, INK))
+			.text("weather_body", MARGIN, 36, Map.of(
 				ComponentType.PROP_TEXT, weatherReport(level),
-				ComponentType.PROP_WRAP_WIDTH, "180"))
-			.text("notices_head", 10, 60, Map.of(
+				ComponentType.PROP_COLOR, INK_BODY,
+				ComponentType.PROP_WRAP_WIDTH, String.valueOf(CONTENT_W)))
+			.text("notices_head", MARGIN, 58, Map.of(
 				ComponentType.PROP_TEXT, Component.translatable("village-mail.bulletin.notices").getString(),
-				ComponentType.PROP_COLOR, "#FFD27F"));
+				ComponentType.PROP_COLOR, INK));
 
 		List<VillageBulletin.Notice> notices =
 			VillageBulletin.get(level.getServer()).noticesNear(level, session.pos, BULLETIN_MAX_NOTICES);
 
 		if (notices.isEmpty()) {
-			b.text("notice_none", 10, 72, Map.of(
+			b.text("notice_none", MARGIN, 70, Map.of(
 				ComponentType.PROP_TEXT, Component.translatable("village-mail.bulletin.quiet").getString(),
-				ComponentType.PROP_COLOR, "#808080"));
+				ComponentType.PROP_COLOR, INK_MUTED));
 		} else {
-			int y = 72;
+			int y = 70;
 			for (int i = 0; i < notices.size(); i++) {
 				Map<String, String> noticeProps = Map.of(
 					ComponentType.PROP_TEXT, "- " + notices.get(i).text(),
-					ComponentType.PROP_WRAP_WIDTH, "180",
-					ComponentType.PROP_COLOR, "#C0C0C0");
-				b.text("notice_" + i, 10, y, noticeProps);
+					ComponentType.PROP_WRAP_WIDTH, String.valueOf(CONTENT_W),
+					ComponentType.PROP_COLOR, INK_BODY);
+				b.text("notice_" + i, MARGIN, y, noticeProps);
 				y += 14;
 			}
 		}
 
-		b.button("bulletin_back", 8, 146, 60, 16, Map.of(ComponentType.PROP_LABEL_KEY, "village-mail.screen.back"));
+		b.button("bulletin_back", MARGIN, BULLETIN_H - 26, 76, 18, Map.of(ComponentType.PROP_LABEL_KEY, "village-mail.screen.back"));
 
 		PandoricalApi.screens().open(player, b.build());
 	}
@@ -772,17 +872,40 @@ public final class MailScreens {
 	private static void returnUnconsumedAttachment(ServerPlayer player) {
 		PublicMailboxSession session = publicMailboxSessions.remove(player.getUUID());
 		if (session == null || session.consumed) return;
-		ItemStack attachment = session.container.getItem(0);
-		if (!attachment.isEmpty()) {
-			if (!player.getInventory().add(attachment.copy())) {
-				player.drop(attachment.copy(), false, Prediction.SERVER_ONLY);
-			}
+		giveBack(player, session.container.getItem(0));
+	}
+
+	/** Into the player's inventory, or at their feet when there is no room for it. */
+	private static void giveBack(ServerPlayer player, ItemStack stack) {
+		if (stack.isEmpty()) return;
+		if (!player.getInventory().add(stack.copy())) {
+			player.drop(stack.copy(), false, Prediction.SERVER_ONLY);
 		}
 	}
 
 	// ========================================================================
 	// Shared helpers
 	// ========================================================================
+
+	private static java.nio.file.Path playerDataDir(MinecraftServer server) {
+		return server.getWorldPath(net.minecraft.world.level.storage.LevelResource.PLAYER_DATA_DIR);
+	}
+
+	/**
+	 * Whether mail can be addressed to this UUID: the same rule the recipient roster
+	 * is built from, so anything the compose screen offers can actually be sent.
+	 *
+	 * <p>A recipient without a mailbox is not a missing recipient - storage parks their
+	 * mail in the pending queue and hands it over when they place one. The send path
+	 * used to demand a mailbox or an online player while the roster offered everyone
+	 * who had ever played, so choosing an offline player off that list reported
+	 * "recipient not found".
+	 */
+	private static boolean isAddressable(MinecraftServer server, UUID uuid) {
+		if (PlayerMailStorage.get(server).hasMailbox(uuid)) return true;
+		if (server.getPlayerList().getPlayer(uuid) != null) return true;
+		return java.nio.file.Files.exists(playerDataDir(server).resolve(uuid + ".dat"));
+	}
 
 	private static List<RecipientEntry> buildRecipients(ServerPlayer player) {
 		MinecraftServer server = player.level().getServer();
@@ -815,8 +938,7 @@ public final class MailScreens {
 		// the canonical roster; names resolve from the local usercache. Entries
 		// the cache cannot name (stale files, cleared cache) are skipped rather
 		// than shown as "Unknown".
-		try (java.util.stream.Stream<java.nio.file.Path> files = java.nio.file.Files.list(
-				server.getWorldPath(net.minecraft.world.level.storage.LevelResource.PLAYER_DATA_DIR))) {
+		try (java.util.stream.Stream<java.nio.file.Path> files = java.nio.file.Files.list(playerDataDir(server))) {
 			files.filter(p -> p.getFileName().toString().endsWith(".dat")).forEach(p -> {
 				String base = p.getFileName().toString();
 				UUID uuid;
@@ -882,9 +1004,7 @@ public final class MailScreens {
 			return false;
 		}
 
-		PlayerMailStorage storage = PlayerMailStorage.get(server);
-		boolean knownRecipient = storage.hasMailbox(recipientUuid) || server.getPlayerList().getPlayer(recipientUuid) != null;
-		if (!knownRecipient) {
+		if (!isAddressable(server, recipientUuid)) {
 			sendError(sender, "village-mail.error.recipient_not_found");
 			return false;
 		}

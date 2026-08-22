@@ -107,10 +107,12 @@ public class Main implements ModInitializer {
 		PandoricalApi.content().registerBlock(MOD_ID + ":mailbox", new BlockRegistration()
 			.baseBlock("minecraft:stone")
 			.property("facing")
+			.interactive()
 			.model(MOD_ID + ":block/mailbox"));
 		PandoricalApi.content().registerBlock(MOD_ID + ":public_mailbox", new BlockRegistration()
 			.baseBlock("minecraft:stone")
 			.property("facing")
+			.interactive()
 			.model(MOD_ID + ":block/public_mailbox"));
 		PandoricalApi.content().registerItem(MOD_ID + ":mailbox", new ItemRegistration()
 			.model(MOD_ID + ":block/mailbox"));
