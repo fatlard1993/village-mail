@@ -29,11 +29,33 @@ dependencies {
 	compileOnly "justfatlard:village-quests:1.0.0"
 }
 
+// Fabric tests these predicates against the loader's *normalized* game version,
+// not Mojang's id: 26.3-snapshot-10 is compared as 26.3-alpha.10. So a floor of
+// ">=26.3" is false on every 26.3 snapshot, and writing the obvious thing makes
+// the mod refuse to load on the version it was built for. Derived from the pin
+// rather than written into the manifest, so the two cannot drift apart.
+def mcFloor = project.minecraft_version
+	.replaceFirst(/-snapshot-/, '-alpha.')
+	.replaceFirst(/-pre-/, '-pre.')
+	.replaceFirst(/-rc-/, '-rc.')
+// The trailing dash is load-bearing: "<26.4" would still admit 26.4's snapshots,
+// because a prerelease sorts below its own release.
+def mcParts = mcFloor.tokenize('.-')
+def minecraftDependency = ">=${mcFloor} <${mcParts[0]}.${(mcParts[1] as int) + 1}-"
+// The +26.3 build tag is ignored in comparison; the floor is the number.
+def fabricApiFloor = ">=" + project.fabric_version.replaceFirst(/\+.*$/, '')
+
 processResources {
 	inputs.property "version", project.version
+	inputs.property "minecraftDependency", minecraftDependency
+	inputs.property "loaderVersion", project.loader_version
+	inputs.property "fabricApiVersion", fabricApiFloor
 
 	filesMatching("fabric.mod.json") {
-		expand "version": project.version
+		expand "version": project.version,
+		       "minecraftDependency": minecraftDependency,
+		       "loaderVersion": project.loader_version,
+		       "fabricApiVersion": fabricApiFloor
 	}
 }
 
