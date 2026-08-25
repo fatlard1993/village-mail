@@ -311,11 +311,22 @@ public class VillageQuestsIntegration {
         // Option labels are translatable: the player's words, not NPC voice
         cachedBuilderAddOptionMethod.invoke(builder, "check_mail", Component.translatable("village-mail.dialogue.option.check_mail").getString(), 0, Integer.MAX_VALUE, checkMailHandler);
         cachedBuilderAddOptionMethod.invoke(builder, "send_package", Component.translatable("village-mail.dialogue.option.send_package").getString(), 10, Integer.MAX_VALUE, sendPackageHandler);
-        cachedBuilderAddOptionMethod.invoke(builder, "route_gossip", Component.translatable("village-mail.dialogue.option.route_gossip").getString(), 10, Integer.MAX_VALUE, routeGossipHandler);
-        cachedBuilderAddOptionMethod.invoke(builder, "mail_route", Component.translatable("village-mail.dialogue.option.mail_route").getString(), 25, Integer.MAX_VALUE, mailRouteHandler);
-        cachedBuilderAddOptionMethod.invoke(builder, "weight_of_mail", Component.translatable("village-mail.dialogue.option.weight_of_mail").getString(), 50, Integer.MAX_VALUE, weightOfMailHandler);
+        // One question about the round, not four.
+        //
+        // These were four separate buttons - the route, the gossip, the weight of it, and a
+        // confession - each unlocking at a higher reputation and none of them replacing the one
+        // below, so a player who had earned the mailperson's trust was rewarded with a wall of
+        // six choices. A conversation is not a menu.
+        //
+        // Now it is one question, asked the same way at every standing, and the bands decide
+        // who answers it: the same lines, reached by knowing them better rather than by
+        // collecting another button. Only one is ever eligible, so only one appears.
+        String theRound = Component.translatable("village-mail.dialogue.option.the_round").getString();
+        cachedBuilderAddOptionMethod.invoke(builder, "the_round", theRound, 10, 24, mailRouteHandler);
+        cachedBuilderAddOptionMethod.invoke(builder, "the_round_gossip", theRound, 25, 49, routeGossipHandler);
+        cachedBuilderAddOptionMethod.invoke(builder, "the_round_weight", theRound, 50, 74, weightOfMailHandler);
+        cachedBuilderAddOptionMethod.invoke(builder, "the_round_deep", theRound, 75, Integer.MAX_VALUE, deepConfessionHandler);
 
-        cachedBuilderAddOptionMethod.invoke(builder, "vm_deep_confession", Component.translatable("village-mail.dialogue.option.deep_confession").getString(), 75, Integer.MAX_VALUE, deepConfessionHandler);
 
         cachedBuilderRegisterMethod.invoke(builder, "mail_person");
     }
