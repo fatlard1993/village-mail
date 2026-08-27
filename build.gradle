@@ -25,8 +25,23 @@ dependencies {
 	// Pandorical — client-enablement library for declarative screens/HUD
 	implementation(project(':pandorical'))
 
-	// Village Quests integration (optional)
-	compileOnly "justfatlard:village-quests:1.0.0"
+	// Optional: village-quests integration, compile-only and never bundled. Resolved by the
+	// version village-quests declares rather than one written down here: a pinned name kept
+	// compiling green against the jar an old build left behind.
+	def villageQuestsProperties = file("../village-quests/gradle.properties")
+	if (villageQuestsProperties.exists()) {
+		def villageQuestsVersion = new Properties().with {
+			villageQuestsProperties.withInputStream { load(it) }
+			getProperty("mod_version")
+		}
+		def villageQuestsJar = file("../village-quests/build/libs/village-quests-${villageQuestsVersion}.jar")
+		if (!villageQuestsJar.exists()) {
+			throw new GradleException("village-quests ${villageQuestsVersion} is not built. Run" +
+				" `mc-build village-quests` (or ./gradlew build in ../village-quests) first -" +
+				" this mod compiles against its API.")
+		}
+		compileOnly files(villageQuestsJar)
+	}
 }
 
 // Fabric tests these predicates against the loader's *normalized* game version,
