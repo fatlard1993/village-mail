@@ -89,6 +89,10 @@ jar {
 	from("LICENSE") {
 		rename { "${it}_${project.base.archivesName.get()}" }
 	}
+	// The readme rides in the jar beside the licence, so a server can show it in-game.
+	from("README.md") {
+		rename { "README_${project.base.archivesName.get()}.md" }
+	}
 }
 
 publishing {

@@ -1,19 +1,17 @@
 {
-	"type": "minecraft:block",
-	"pools": [
-		{
-			"rolls": 1,
-			"entries": [
-				{
-					"type": "minecraft:item",
-					"name": "village-mail:public_mailbox"
-				}
-			],
-			"conditions": [
-				{
-					"condition": "minecraft:survives_explosion"
-				}
-			]
-		}
-	]
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "village-mail:public_mailbox"
+        }
+      ],
+      "condition": {
+        "type": "minecraft:survives_explosion"
+      }
+    }
+  ]
 }

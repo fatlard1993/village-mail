@@ -29,9 +29,9 @@ Village Mail uses Pandorical for two things:
 
 Pandorical must be installed client-side for any of this to work. Without it, a player gets a chat message telling them Pandorical is required instead of a functioning mailbox; see the note above.
 
-## Installation
+## Development
 
-Install server-side alongside its declared dependencies (see `fabric.mod.json`); connecting clients need only Pandorical. Version targets live in `gradle.properties` (Minecraft, loader, Fabric API) and `fabric.mod.json` (Java).
+Installing is in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## License
 
