@@ -70,17 +70,23 @@ public class MailDeliveryManager {
 
 	private void processDelayedTasks(MinecraftServer server) {
 		if (delayedTasks.isEmpty()) return;
+		// Collected first and run after, because a task that runs may schedule the next one,
+		// and that appends to the list it would otherwise still be walking.
 		long currentTick = server.getTickCount();
+		List<Runnable> due = new ArrayList<>();
 		Iterator<DelayedTask> it = delayedTasks.iterator();
 		while (it.hasNext()) {
 			DelayedTask task = it.next();
 			if (currentTick >= task.executeAtTick()) {
-				try {
-					task.action().run();
-				} catch (Exception e) {
-					LOGGER.error("Error in delayed task: " + e.getMessage());
-				}
 				it.remove();
+				due.add(task.action());
+			}
+		}
+		for (Runnable action : due) {
+			try {
+				action.run();
+			} catch (Exception e) {
+				LOGGER.error("Error in delayed task: " + e.getMessage());
 			}
 		}
 	}
@@ -409,11 +415,16 @@ public class MailDeliveryManager {
 			ServerLevel mailboxWorld = (ServerLevel) mailbox.getLevel();
 			if (mailboxWorld == null) continue;
 
-			// Search wider: the villager will walk to the mailbox
+			// Search wider: the villager will walk to the mailbox. Only a mail person who knows
+			// the player writes to them: one they have dealt with, which buying the mailbox is.
+			// A stranger with a mailbox got quest offers and gifts from villagers they had never
+			// met, before they had spoken to a single one.
 			AABB searchBox = new AABB(pos).inflate(64);
+			UUID owner = player.getUUID();
 			List<Villager> mailPersons = mailboxWorld.getEntities(
 				EntityTypeTest.forClass(Villager.class), searchBox,
 				v -> v.getVillagerData().profession().is(Main.MAIL_PERSON_KEY)
+					&& knows(v, owner)
 					&& !activeDeliveries.values().stream().anyMatch(d -> d.villagerUuid().equals(v.getUUID()))
 			);
 
@@ -437,6 +448,15 @@ public class MailDeliveryManager {
 		if (currentTick % 6000 == 0) {
 			storage.cleanStaleCooldowns(currentTime, VILLAGER_MAIL_INTERVAL * 10);
 		}
+	}
+
+	/**
+	 * Whether this villager has any regard for this player: they have traded, or the player has
+	 * done the village a good turn that villagers gossip about. A villager writes to people it
+	 * knows, and a mailbox alone is not an introduction.
+	 */
+	private static boolean knows(Villager villager, UUID player) {
+		return villager.getGossips().getReputation(player, type -> true) > 0;
 	}
 
 	private void sendVillagerMail(MailboxBlockEntity mailbox, Villager villager, MinecraftServer server) {
@@ -567,6 +587,8 @@ public class MailDeliveryManager {
 			var loc = locOpt.get();
 			if (!loc.dimension().equals(dimension)) continue;
 			if (!loc.pos().closerThan(deathPos, OBITUARY_RADIUS)) continue;
+			// A letter about a death is for those who knew them; the notice on the board is for everyone.
+			if (!knows(villager, ownerUuid)) continue;
 
 			Long lastTime = lastObituaryTime.get(ownerUuid);
 			if (lastTime != null && currentTick - lastTime < OBITUARY_COOLDOWN_TICKS) continue;

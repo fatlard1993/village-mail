@@ -192,6 +192,7 @@ public final class MailScreens {
 		});
 		screens.onAction(SCREEN_PUBLIC_MAILBOX, "send_btn", (p, d) -> handlePublicSend(p));
 		screens.onAction(SCREEN_PUBLIC_MAILBOX, "bulletin_btn", (p, d) -> openBulletin(p));
+		screens.onAction(SCREEN_PUBLIC_MAILBOX, "inbox_btn", (p, d) -> openHeldMail(p));
 		// Back re-opens the mailbox rather than closing: the board is a page of the
 		// mailbox, not a separate errand.
 		screens.onAction(SCREEN_BULLETIN, "bulletin_back", (p, d) -> {
@@ -661,6 +662,10 @@ public final class MailScreens {
 			// rather than taking a share of the row the send button needs.
 			.button("bulletin_btn", RIGHT - 76, 4, 76, 16, Map.of(
 				ComponentType.PROP_LABEL_KEY, "village-mail.screen.bulletin"))
+			// Reading is the other thing a public mailbox is for: the post hands over
+			// whatever it holds for this player and shows their inbox, mailbox or none.
+			.button("inbox_btn", RIGHT - 76 - 4 - 76, 4, 76, 16, Map.of(
+				ComponentType.PROP_LABEL, yourMailLabel(player)))
 			.button("prev_btn", MARGIN, 24, 16, 18, Map.of(ComponentType.PROP_LABEL, "<", ComponentType.PROP_ENABLED, "false"))
 			.button("next_btn", RIGHT - 16, 24, 16, 18, Map.of(
 				ComponentType.PROP_LABEL, ">", ComponentType.PROP_ENABLED, String.valueOf(session.recipients.size() > 1)))
@@ -688,6 +693,19 @@ public final class MailScreens {
 		// the call is the one it cleans up.
 		PandoricalApi.screens().openContainer(player, b.build(), session.container, Set.of());
 		publicMailboxSessions.put(player.getUUID(), session);
+	}
+
+	private static String yourMailLabel(ServerPlayer player) {
+		PlayerMailStorage storage = PlayerMailStorage.get(player.level().getServer());
+		int waiting = storage.getUnreadCount(player.getUUID()) + storage.getPendingCount(player.getUUID());
+		String label = Component.translatable("village-mail.screen.your_mail").getString();
+		return waiting > 0 ? label + " (" + waiting + ")" : label;
+	}
+
+	/** The post hands over what it holds for this player and opens their inbox. */
+	private static void openHeldMail(ServerPlayer player) {
+		PlayerMailStorage.get(player.level().getServer()).collectPending(player.getUUID());
+		openMailbox(player, player.getName().getString());
 	}
 
 	/**

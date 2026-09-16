@@ -336,15 +336,19 @@ public final class MailApi {
 	private static void notifyPlayerIfOnline(MinecraftServer server, UUID recipientUuid, String senderName) {
 		ServerPlayer player = server.getPlayerList().getPlayer(recipientUuid);
 		if (player != null) {
+			// A letter for someone with no mailbox is held at the post, and the notice says
+			// so: "You have mail" sent players to a public mailbox and a mail person who
+			// both, until they knew about held mail, had nothing for them.
+			String held = PlayerMailStorage.get(server).hasMailbox(recipientUuid) ? "" : "_held";
 			if (senderName != null) {
 				player.sendSystemMessage(
-					Component.translatable("village-mail.api.new_mail_from", senderName)
+					Component.translatable("village-mail.api.new_mail_from" + held, senderName)
 						.withStyle(ChatFormatting.YELLOW),
 					true
 				);
 			} else {
 				player.sendSystemMessage(
-					Component.translatable("village-mail.api.new_mail")
+					Component.translatable("village-mail.api.new_mail" + held)
 						.withStyle(ChatFormatting.YELLOW),
 					true
 				);

@@ -382,6 +382,18 @@ public class PlayerMailStorage {
 	}
 
 	/**
+	 * Hand a player the mail held for them at the post, mailbox or none: what a public
+	 * mailbox or a mail person does when asked. Returns how many letters changed hands.
+	 */
+	public int collectPending(UUID playerUuid) {
+		List<MailMessage> pending = pendingMessages.remove(playerUuid);
+		if (pending == null || pending.isEmpty()) return 0;
+		playerMessages.computeIfAbsent(playerUuid, k -> new ArrayList<>()).addAll(0, pending);
+		markDirty();
+		return pending.size();
+	}
+
+	/**
 	 * Get count of pending messages (for players without mailboxes).
 	 */
 	public int getPendingCount(UUID playerUuid) {

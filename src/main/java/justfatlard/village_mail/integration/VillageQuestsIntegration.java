@@ -193,6 +193,9 @@ public class VillageQuestsIntegration {
 
         // --- "Do you have any mail for me?" (any reputation) ---
         Object checkMailHandler = createDialogueHandler((villager, player, optionId) -> {
+            // Whatever the post is holding changes hands here, mailbox or none.
+            justfatlard.village_mail.mail.PlayerMailStorage.get(player.level().getServer())
+                .collectPending(player.getUUID());
             int unreadCount = justfatlard.village_mail.api.MailApi.getUnreadCount(
                 player.level().getServer(), player.getUUID());
             if (unreadCount > 0) {

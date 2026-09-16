@@ -182,7 +182,7 @@ public class VillageBuilderIntegration {
 	 * Process donated items through the Village Builder system.
 	 * Items needed for construction are accepted; the rest are returned as
 	 * {@link DonationOutcome#rejected()}. Building materials that don't fit the
-	 * village inventory are reported as {@link DonationOutcome#overflowLost()} — the
+	 * village inventory are reported as {@link DonationOutcome#overflowLost()}, the
 	 * caller must surface that count so the sender is told their materials were lost
 	 * (see village-builder INTEGRATION_EXAMPLE.md: API-path overflow is silently
 	 * destroyed, not dropped as entities).
