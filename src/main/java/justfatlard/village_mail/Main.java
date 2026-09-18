@@ -72,6 +72,12 @@ public class Main implements ModInitializer {
 			.setId(MAILBOX_BLOCK_KEY)
 			.strength(2.5f)
 			.noOcclusion()
+			// Solid, said outright. Worked out from the collision box otherwise - an average
+			// of the three sides against 0.72917 - and a mailbox comes to 0.625, so flowing
+			// water counted it as something to wash away. The mail itself was never at risk,
+			// since PlayerMailStorage keeps it in the world's data and not in the box; what
+			// went was the box somebody put there.
+			.forceSolidOn()
 	);
 
 	// Public mailbox: primary job site for the mail person
@@ -80,6 +86,8 @@ public class Main implements ModInitializer {
 			.setId(PUBLIC_MAILBOX_BLOCK_KEY)
 			.strength(3.0f)
 			.noOcclusion()
+			// The same, and the same reason: see the personal mailbox above.
+			.forceSolidOn()
 	);
 
 	public static BlockEntityType<MailboxBlockEntity> MAILBOX_BLOCK_ENTITY;
