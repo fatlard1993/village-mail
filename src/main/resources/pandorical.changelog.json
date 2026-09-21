@@ -1,0 +1,19 @@
+{
+  "overview": [
+    "A postal system for villages: buy a mailbox from the village Mail Person, write to other players with an item attached, and get deliveries, gifts and village news.",
+    "It needs Pandorical on the server and on the client; without it you get a chat message instead of a mail screen."
+  ],
+  "versions": {
+    "1.0.2": [
+      "A Mail Person caught by a zombie now wears a zombie Mail Person's own look, instead of the missing texture that used to stand in for it."
+    ],
+    "1.0.1": [
+      "Mail held for a player with no mailbox can be collected at any public mailbox or asked for from a Mail Person, and the notice now says where it is waiting.",
+      "Villagers only write to people they actually know, and a spilt bucket no longer washes a mailbox away."
+    ],
+    "1.0.0": [
+      "The first release: personal and public mailboxes, letters with an attachment to anyone who has played on the server, and a notice board carrying the weather and the deaths of villagers nearby.",
+      "Donations go to Village Builder's next project, an unread count sits in the corner of the screen, and post offices generate with a chest worth opening."
+    ]
+  }
+}

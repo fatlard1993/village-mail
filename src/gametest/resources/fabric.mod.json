@@ -1,0 +1,18 @@
+{
+	"schemaVersion": 1,
+	"id": "village-mail-gametest",
+	"version": "1.0.0",
+	"name": "Village Mail smoke test",
+	"description": "Loads the mod, joins a world, and fails if anything on the way threw.",
+	"license": "MIT",
+	"environment": "*",
+	"entrypoints": {
+		"fabric-client-gametest": [
+			"justfatlard.village_mail.gametest.SmokeTest"
+		]
+	},
+	"depends": {
+		"village-mail": "*",
+		"fabric-client-gametest-api-v1": "*"
+	}
+}

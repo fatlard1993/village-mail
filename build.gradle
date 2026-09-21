@@ -17,6 +17,9 @@ repositories {
 loom {
 }
 
+// Smoke and full gametests, configured once for the whole suite in Pandorical.
+apply from: file("../pandorical/gametest.gradle")
+
 dependencies {
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
 	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
