@@ -5,15 +5,21 @@
   ],
   "versions": {
     "1.0.2": [
-      "A Mail Person caught by a zombie now wears a zombie Mail Person's own look, instead of the missing texture that used to stand in for it."
+      "A Mail Person caught by a zombie wears their own zombie look, not a missing texture."
     ],
     "1.0.1": [
-      "Mail held for a player with no mailbox can be collected at any public mailbox or asked for from a Mail Person, and the notice now says where it is waiting.",
-      "Villagers only write to people they actually know, and a spilt bucket no longer washes a mailbox away."
+      "Mail held for a player with no mailbox can be collected at any public mailbox.",
+      "Or asked for from a Mail Person. The notice says where it is waiting.",
+      "Villagers only write to people they actually know.",
+      "A spilt bucket no longer washes a mailbox away."
     ],
     "1.0.0": [
-      "The first release: personal and public mailboxes, letters with an attachment to anyone who has played on the server, and a notice board carrying the weather and the deaths of villagers nearby.",
-      "Donations go to Village Builder's next project, an unread count sits in the corner of the screen, and post offices generate with a chest worth opening."
+      "Personal and public mailboxes.",
+      "Letters with an attachment, to anyone who has played on the server.",
+      "A notice board carrying the weather and the deaths of villagers nearby.",
+      "Donations go to Village Builder's next project.",
+      "An unread count sits in the corner of the screen.",
+      "Post offices generate with a chest worth opening."
     ]
   }
 }
