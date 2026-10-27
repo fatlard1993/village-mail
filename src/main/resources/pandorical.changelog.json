@@ -4,6 +4,9 @@
     "It needs Pandorical on the server and on the client; without it you get a chat message instead of a mail screen."
   ],
   "versions": {
+    "1.0.4": [
+      "Mod Menu's Donate button leads to sponsoring the author on GitHub. Nothing in play changes."
+    ],
     "1.0.3": [
       "Release notes rewritten to read plainly; nothing in play changes."
     ],
