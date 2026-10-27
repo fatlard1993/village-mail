@@ -1,0 +1,21 @@
+name: release
+
+# Nightly, an hour ahead of ender-index's crawl, which reads the release this makes.
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Build whether or not the version is released, and release nothing
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    uses: fatlard1993/.github/.github/workflows/mod-release.yml@main
+    with:
+      dry-run: ${{ inputs.dry-run == true }}
