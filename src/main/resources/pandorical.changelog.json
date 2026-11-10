@@ -4,6 +4,9 @@
     "It needs Pandorical on the server and on the client; without it you get a chat message instead of a mail screen."
   ],
   "versions": {
+    "1.0.5": [
+      "Drop changelog notes for changes nothing in the game shows."
+    ],
     "1.0.2": [
       "A Mail Person caught by a zombie wears their own zombie look, not a missing texture."
     ],
