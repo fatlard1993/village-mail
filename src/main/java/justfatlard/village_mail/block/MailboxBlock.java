@@ -28,6 +28,7 @@ import net.minecraft.world.level.Level;
 
 import org.jetbrains.annotations.Nullable;
 
+import justfatlard.village_mail.mail.ArenaPost;
 import justfatlard.village_mail.mail.PlayerMailStorage;
 
 public class MailboxBlock extends BaseEntityBlock {
@@ -85,6 +86,11 @@ public class MailboxBlock extends BaseEntityBlock {
 			BlockEntity blockEntity = world.getBlockEntity(pos);
 			if (blockEntity instanceof MailboxBlockEntity mailbox) {
 				mailbox.setOwner(player);
+				if (ArenaPost.isArena(world)) {
+					// The arena's own post, which leaves the player's real mailbox where it is.
+					ArenaPost.get().placeMailbox(player, pos);
+					return;
+				}
 				String dimension = world.dimension().identifier().toString();
 				PlayerMailStorage storage = PlayerMailStorage.get(player.level().getServer());
 				storage.registerMailbox(player.getUUID(), dimension, pos);
@@ -96,8 +102,14 @@ public class MailboxBlock extends BaseEntityBlock {
 	protected void affectNeighborsAfterRemoval(BlockState state, ServerLevel world, BlockPos pos, boolean moved) {
 		BlockEntity blockEntity = world.getBlockEntity(pos);
 		if (blockEntity instanceof MailboxBlockEntity mailbox && mailbox.getOwnerUuid() != null) {
-			PlayerMailStorage storage = PlayerMailStorage.get(world.getServer());
-			storage.unregisterMailbox(mailbox.getOwnerUuid(), pos);
+			if (ArenaPost.isArena(world)) {
+				// Never the real registry from here: it is matched by position alone, and an arena
+				// mailbox standing where the real one does in another dimension would unregister it.
+				ArenaPost.get().removeMailbox(mailbox.getOwnerUuid(), pos);
+			} else {
+				PlayerMailStorage storage = PlayerMailStorage.get(world.getServer());
+				storage.unregisterMailbox(mailbox.getOwnerUuid(), pos);
+			}
 		}
 		super.affectNeighborsAfterRemoval(state, world, pos, moved);
 	}

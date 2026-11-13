@@ -13,6 +13,8 @@ import justfatlard.village_mail.Main;
 import justfatlard.village_mail.integration.VillageBuilderIntegration;
 import justfatlard.village_mail.api.MailApi;
 import justfatlard.village_mail.api.MailApiImpl;
+import justfatlard.village_mail.mail.ArenaPost;
+import justfatlard.village_mail.mail.Letters;
 import justfatlard.village_mail.mail.MailMessage;
 import justfatlard.village_mail.mail.MessageButton;
 import justfatlard.village_mail.mail.PlayerMailStorage;
@@ -111,6 +113,8 @@ public final class MailScreens {
 	private record MailboxSession(String ownerName, boolean showingRead, int scrollOffset, List<MailMessage> visibleSlice) {}
 
 	private static final class ComposeSession {
+		/** Where it was opened: see {@link ArenaPost#place}. */
+		String place;
 		ComposeMode mode;
 		SimpleContainer container;
 		List<RecipientEntry> recipients;
@@ -120,6 +124,8 @@ public final class MailScreens {
 	}
 
 	private static final class PublicMailboxSession {
+		/** Where it was opened: see {@link ArenaPost#place}. */
+		String place;
 		SimpleContainer container;
 		BlockPos pos;
 		List<RecipientEntry> recipients;
@@ -217,6 +223,22 @@ public final class MailScreens {
 		lastSendTime.remove(uuid);
 	}
 
+	/**
+	 * The player has just gone into or out of a PvP Dimensions arena. Whatever mail screen they had
+	 * open belongs to the side they came from, so it is shut: the views are dropped, and a compose or
+	 * public mailbox screen is closed, which hands its attachment to {@link #returnAttachment} to be
+	 * dealt with by where the screen was opened.
+	 */
+	public static void crossedArenaLine(ServerPlayer player) {
+		UUID uuid = player.getUUID();
+		mailboxSessions.remove(uuid);
+		detailMessage.remove(uuid);
+		detailParentShowingRead.remove(uuid);
+		String screenId = PandoricalApi.getOpenScreenId(uuid);
+		if (screenId != null && screenId.startsWith(Main.MOD_ID + ":")) PandoricalApi.screens().close(player, screenId);
+		if (composeSessions.containsKey(uuid) || publicMailboxSessions.containsKey(uuid)) player.closeContainer();
+	}
+
 	// ========================================================================
 	// Mailbox (personal) list
 	// ========================================================================
@@ -230,8 +252,8 @@ public final class MailScreens {
 	}
 
 	private static void renderMailbox(ServerPlayer player, String ownerName, boolean showingRead, int scrollOffset) {
-		MinecraftServer server = player.level().getServer();
-		PlayerMailStorage storage = PlayerMailStorage.get(server);
+		// The arena's own post inside a PvP Dimensions arena, the server's anywhere else.
+		Letters storage = ArenaPost.letters(player);
 		List<MailMessage> messages = showingRead
 			? storage.getReadMessages(player.getUUID())
 			: storage.getUnreadMessages(player.getUUID());
@@ -312,9 +334,9 @@ public final class MailScreens {
 		MailMessage message = session.visibleSlice().get(index);
 
 		if (!message.isRead()) {
-			PlayerMailStorage storage = PlayerMailStorage.get(player.level().getServer());
-			storage.markAsRead(player.getUUID(), message.getId());
-			MailApiImpl.fireMessageRead(player.getUUID(), message);
+			ArenaPost.letters(player).markAsRead(player.getUUID(), message.getId());
+			// Other mods hear about the server's mail, not an arena's.
+			if (!ArenaPost.isArena(player.level())) MailApiImpl.fireMessageRead(player.getUUID(), message);
 			MailHud.updateUnreadCount(player);
 		}
 
@@ -418,7 +440,7 @@ public final class MailScreens {
 		MailMessage message = detailMessage.get(player.getUUID());
 		if (message == null) return;
 
-		PlayerMailStorage storage = PlayerMailStorage.get(player.level().getServer());
+		Letters storage = ArenaPost.letters(player);
 		if (message.hasUncollectedItems()) {
 			handleCollectItems(player, message, storage);
 		}
@@ -446,8 +468,7 @@ public final class MailScreens {
 			case REPLY -> openComposeFromDetail(player, ComposeMode.REPLY, message);
 			case FORWARD -> openComposeFromDetail(player, ComposeMode.FORWARD, message);
 			case COLLECT_ITEMS -> {
-				PlayerMailStorage storage = PlayerMailStorage.get(server);
-				handleCollectItems(player, message, storage);
+				handleCollectItems(player, message, ArenaPost.letters(player));
 				MailHud.updateUnreadCount(player);
 				renderDetail(player, message);
 			}
@@ -490,9 +511,10 @@ public final class MailScreens {
 			return;
 		}
 
-		List<RecipientEntry> recipients = mergePrefill(buildRecipients(player), prefillRecipientUuid, prefillRecipientName);
+		List<RecipientEntry> recipients = mergePrefill(recipientsFor(player), prefillRecipientUuid, prefillRecipientName);
 
 		ComposeSession session = new ComposeSession();
+		session.place = ArenaPost.place(player);
 		session.mode = mode;
 		session.container = new SimpleContainer(1);
 		session.recipients = recipients;
@@ -589,6 +611,10 @@ public final class MailScreens {
 	private static void sendComposeMessage(ServerPlayer player) {
 		ComposeSession session = composeSessions.get(player.getUUID());
 		if (session == null || session.recipients.isEmpty()) return;
+		if (!session.place.equals(ArenaPost.place(player))) {
+			closeCompose(player);
+			return;
+		}
 		RecipientEntry recipient = session.recipients.get(session.selectedIndex);
 		ItemStack attachment = session.container.getItem(0).copy();
 		boolean sent = trySendMail(player, recipient.uuid(), session.body, attachment);
@@ -617,7 +643,7 @@ public final class MailScreens {
 	private static void returnUnconsumedCompose(ServerPlayer player) {
 		ComposeSession session = composeSessions.remove(player.getUUID());
 		if (session == null || session.consumed) return;
-		giveBack(player, session.container.getItem(0));
+		returnAttachment(player, session.container.getItem(0), session.place);
 	}
 
 	// ========================================================================
@@ -631,10 +657,13 @@ public final class MailScreens {
 		}
 
 		PublicMailboxSession session = new PublicMailboxSession();
+		session.place = ArenaPost.place(player);
 		session.container = new SimpleContainer(1);
 		session.pos = pos;
-		session.recipients = buildRecipients(player);
-		if (VillageBuilderIntegration.isAvailable()) {
+		session.recipients = recipientsFor(player);
+		// No donations from a PvP Dimensions arena: the village's stores are the server's, and what
+		// it cannot use comes back as the server's mail, which would carry it out of the arena.
+		if (VillageBuilderIntegration.isAvailable() && session.place.isEmpty()) {
 			// First in the carousel per the owner's call: donation is the
 			// mailbox's headline civic act, person-to-person mail cycles after
 			session.recipients.add(0, donationEntry());
@@ -696,7 +725,7 @@ public final class MailScreens {
 	}
 
 	private static String yourMailLabel(ServerPlayer player) {
-		PlayerMailStorage storage = PlayerMailStorage.get(player.level().getServer());
+		Letters storage = ArenaPost.letters(player);
 		int waiting = storage.getUnreadCount(player.getUUID()) + storage.getPendingCount(player.getUUID());
 		String label = Component.translatable("village-mail.screen.your_mail").getString();
 		return waiting > 0 ? label + " (" + waiting + ")" : label;
@@ -704,7 +733,7 @@ public final class MailScreens {
 
 	/** The post hands over what it holds for this player and opens their inbox. */
 	private static void openHeldMail(ServerPlayer player) {
-		PlayerMailStorage.get(player.level().getServer()).collectPending(player.getUUID());
+		ArenaPost.letters(player).collectPending(player.getUUID());
 		openMailbox(player, player.getName().getString());
 	}
 
@@ -866,6 +895,10 @@ public final class MailScreens {
 			sendError(player, "village-mail.error.invalid_recipient");
 			return;
 		}
+		if (!session.place.equals(ArenaPost.place(player))) {
+			closePublicMailbox(player);
+			return;
+		}
 		RecipientEntry recipient = session.recipients.get(session.selectedIndex);
 		if (isDonation(recipient)) {
 			// handleDonate re-checks for an empty attachment server-side; the greyed
@@ -890,7 +923,32 @@ public final class MailScreens {
 	private static void returnUnconsumedAttachment(ServerPlayer player) {
 		PublicMailboxSession session = publicMailboxSessions.remove(player.getUUID());
 		if (session == null || session.consumed) return;
-		giveBack(player, session.container.getItem(0));
+		returnAttachment(player, session.container.getItem(0), session.place);
+	}
+
+	/**
+	 * An unsent attachment, back to the player: into their inventory when they are still where the
+	 * screen was opened. Across a PvP Dimensions arena's edge it does not go with them. One put in
+	 * inside an arena came from the arena's kit and stays there, thrown away with the rest of it;
+	 * one put in outside is the player's own, and the server's post keeps it for them as a letter
+	 * rather than let it into an arena that would throw it away.
+	 */
+	private static void returnAttachment(ServerPlayer player, ItemStack stack, String openedAt) {
+		if (stack.isEmpty()) return;
+		if (openedAt.equals(ArenaPost.place(player))) {
+			giveBack(player, stack);
+			return;
+		}
+		if (!openedAt.isEmpty()) return;
+		MailMessage kept = new MailMessage.Builder()
+			.sender(null, Component.translatable("village-mail.return.sender").getString())
+			.recipient(player.getUUID())
+			.type(MailMessage.MessageType.SYSTEM)
+			.body(Component.translatable("village-mail.return.unsent_body").getString())
+			.attachment(stack.copy())
+			.button(MessageButton.collectItems())
+			.build();
+		PlayerMailStorage.get(player.level().getServer()).addMessage(player.getUUID(), kept);
 	}
 
 	/** Into the player's inventory, or at their feet when there is no room for it. */
@@ -923,6 +981,28 @@ public final class MailScreens {
 		if (PlayerMailStorage.get(server).hasMailbox(uuid)) return true;
 		if (server.getPlayerList().getPlayer(uuid) != null) return true;
 		return java.nio.file.Files.exists(playerDataDir(server).resolve(uuid + ".dat"));
+	}
+
+	/** Who this player can write to from where they stand. */
+	private static List<RecipientEntry> recipientsFor(ServerPlayer player) {
+		return ArenaPost.isArena(player.level()) ? buildArenaRecipients(player) : buildRecipients(player);
+	}
+
+	/**
+	 * In a PvP Dimensions arena, the arena's post reaches only the players in that arena, and the
+	 * player themselves: a letter to yourself is the one a solo arena can post, and harmless there,
+	 * where it cannot carry anything anywhere the player could not walk it.
+	 */
+	private static List<RecipientEntry> buildArenaRecipients(ServerPlayer player) {
+		List<RecipientEntry> recipients = new ArrayList<>();
+		for (ServerPlayer other : player.level().getServer().getPlayerList().getPlayers()) {
+			if (other != player && ArenaPost.sameArena(player, other)) {
+				recipients.add(new RecipientEntry(other.getUUID(), other.getName().getString(), true));
+			}
+		}
+		recipients.add(new RecipientEntry(player.getUUID(),
+			Component.translatable("village-mail.screen.recipient_self").getString(), true));
+		return recipients;
 	}
 
 	private static List<RecipientEntry> buildRecipients(ServerPlayer player) {
@@ -1000,9 +1080,10 @@ public final class MailScreens {
 
 	/**
 	 * Validates and sends a text message with an optional item attachment.
-	 * Shared by the compose screen and the public mailbox send button.
+	 * Shared by the compose screen and the public mailbox send button, and public so the
+	 * gametests can post a letter the way those buttons do.
 	 */
-	private static boolean trySendMail(ServerPlayer sender, UUID recipientUuid, String rawBody, ItemStack attachment) {
+	public static boolean trySendMail(ServerPlayer sender, UUID recipientUuid, String rawBody, ItemStack attachment) {
 		MinecraftServer server = sender.level().getServer();
 
 		long now = System.currentTimeMillis();
@@ -1017,14 +1098,24 @@ public final class MailScreens {
 			sendError(sender, "village-mail.error.invalid_recipient");
 			return false;
 		}
-		if (recipientUuid.equals(sender.getUUID())) {
-			sendError(sender, "village-mail.error.self_send");
-			return false;
-		}
-
-		if (!isAddressable(server, recipientUuid)) {
-			sendError(sender, "village-mail.error.recipient_not_found");
-			return false;
+		// In a PvP Dimensions arena, the arena's own post: see ArenaPost.
+		boolean arena = ArenaPost.isArena(sender.level());
+		ServerPlayer arenaRecipient = null;
+		if (arena) {
+			arenaRecipient = server.getPlayerList().getPlayer(recipientUuid);
+			if (arenaRecipient == null || !ArenaPost.sameArena(sender, arenaRecipient)) {
+				sendError(sender, "village-mail.error.not_in_arena");
+				return false;
+			}
+		} else {
+			if (recipientUuid.equals(sender.getUUID())) {
+				sendError(sender, "village-mail.error.self_send");
+				return false;
+			}
+			if (!isAddressable(server, recipientUuid)) {
+				sendError(sender, "village-mail.error.recipient_not_found");
+				return false;
+			}
 		}
 
 		String body = rawBody == null ? "" : rawBody;
@@ -1052,13 +1143,35 @@ public final class MailScreens {
 		}
 
 		MailMessage message = builder.build();
-		MailApi.sendMessage(server, message);
+		if (arena) {
+			ArenaPost.get().deliver(arenaRecipient, message);
+			if (arenaRecipient != sender) {
+				arenaRecipient.sendSystemMessage(Component.translatable("village-mail.api.new_mail_from", sender.getName().getString())
+					.withStyle(ChatFormatting.YELLOW), true);
+			}
+			MailHud.updateUnreadCount(arenaRecipient);
+		} else {
+			MailApi.sendMessage(server, message);
+		}
 
-		sender.sendSystemMessage(Component.translatable("village-mail.feedback.message_sent").withStyle(ChatFormatting.GREEN), true);
+		String sentKey = arenaRecipient == sender ? "village-mail.feedback.message_sent_self" : "village-mail.feedback.message_sent";
+		sender.sendSystemMessage(Component.translatable(sentKey).withStyle(ChatFormatting.GREEN), true);
 		return true;
 	}
 
-	private static void handleCollectItems(ServerPlayer player, MailMessage message, PlayerMailStorage storage) {
+	/** The Collect Items button on a letter, from the post the player stands in; public for the gametests. */
+	public static void collect(ServerPlayer player, MailMessage message) {
+		handleCollectItems(player, message, ArenaPost.letters(player));
+	}
+
+	private static void handleCollectItems(ServerPlayer player, MailMessage message, Letters storage) {
+		// Only from the post the player is standing in. A letter shown on the other side of a PvP
+		// Dimensions arena's edge, a screen left open across it, is not found here and gives nothing:
+		// the server's mail is not collected into an arena, and an arena's is not carried out.
+		if (storage.getMessage(player.getUUID(), message.getId()).isEmpty()) {
+			sendError(player, "village-mail.error.message_not_found");
+			return;
+		}
 		synchronized (message) {
 			if (message.isItemsCollected()) {
 				sendError(player, "village-mail.error.already_collected");
@@ -1080,7 +1193,7 @@ public final class MailScreens {
 			}
 		}
 
-		MailApiImpl.fireItemsCollected(player.getUUID(), message);
+		if (!ArenaPost.isArena(player.level())) MailApiImpl.fireItemsCollected(player.getUUID(), message);
 		player.sendSystemMessage(Component.translatable("village-mail.feedback.items_collected").withStyle(ChatFormatting.GREEN), true);
 	}
 

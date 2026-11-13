@@ -193,11 +193,11 @@ public class VillageQuestsIntegration {
 
         // --- "Do you have any mail for me?" (any reputation) ---
         Object checkMailHandler = createDialogueHandler((villager, player, optionId) -> {
-            // Whatever the post is holding changes hands here, mailbox or none.
-            justfatlard.village_mail.mail.PlayerMailStorage.get(player.level().getServer())
-                .collectPending(player.getUUID());
-            int unreadCount = justfatlard.village_mail.api.MailApi.getUnreadCount(
-                player.level().getServer(), player.getUUID());
+            // Whatever the post is holding changes hands here, mailbox or none. In a PvP Dimensions
+            // arena, the arena's own post, which holds nothing and only counts the arena's letters.
+            justfatlard.village_mail.mail.Letters letters = justfatlard.village_mail.mail.ArenaPost.letters(player);
+            letters.collectPending(player.getUUID());
+            int unreadCount = letters.getUnreadCount(player.getUUID());
             if (unreadCount > 0) {
                 return Component.translatable("village-mail.quest.check_mail.has_mail", unreadCount)
                     .withStyle(ChatFormatting.GREEN);

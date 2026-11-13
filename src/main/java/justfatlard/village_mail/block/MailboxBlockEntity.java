@@ -11,6 +11,7 @@ import net.minecraft.core.BlockPos;
 import java.util.UUID;
 
 import justfatlard.village_mail.Main;
+import justfatlard.village_mail.mail.ArenaPost;
 import justfatlard.village_mail.mail.PlayerMailStorage;
 import justfatlard.village_mail.pandorical.MailScreens;
 
@@ -66,7 +67,10 @@ public class MailboxBlockEntity extends BlockEntity {
 			return;
 		}
 		// Register this mailbox as the player's active mailbox (updates location + delivers pending)
-		if (ownerUuid != null) {
+		if (ownerUuid != null && ArenaPost.isArena(player.level())) {
+			// In an arena, the arena's own post: the real registration stays where it is.
+			ArenaPost.get().placeMailbox(player, this.worldPosition);
+		} else if (ownerUuid != null) {
 			PlayerMailStorage storage = PlayerMailStorage.get(player.level().getServer());
 			String dimension = player.level().dimension().identifier().toString();
 			storage.registerMailbox(player.getUUID(), dimension, this.worldPosition);

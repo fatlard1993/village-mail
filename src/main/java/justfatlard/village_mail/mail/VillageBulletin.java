@@ -85,6 +85,9 @@ public class VillageBulletin {
 
 	/** Pin a notice to every board within {@link #NOTICE_RADIUS} of where it happened. */
 	public void post(ServerLevel level, BlockPos pos, String text) {
+		// Not in a PvP Dimensions arena: this file outlives the arena, and its plot is handed to the
+		// next one, whose board would read out a death that happened in somebody else's game.
+		if (ArenaPost.isArena(level)) return;
 		notices.add(new Notice(
 			level.dimension().identifier().toString(), pos.immutable(),
 			level.getGameTime(), text));
@@ -98,6 +101,7 @@ public class VillageBulletin {
 	 * @param limit most a board displays at once; older ones stay stored until they age out
 	 */
 	public List<Notice> noticesNear(ServerLevel level, BlockPos pos, int limit) {
+		if (ArenaPost.isArena(level)) return List.of();
 		String dimension = level.dimension().identifier().toString();
 		long now = level.getGameTime();
 

@@ -1,0 +1,39 @@
+{
+  "demo": {
+    "name": "Village Mail",
+    "icon": "village-mail:mailbox",
+    "about": [
+      "A post office for villages: buy a mailbox from the Mail Person, write letters with one item tucked inside, and find deliveries waiting when you check your mail.",
+      "Set down the public mailbox and a villager will take the job of Mail Person. Sell them your paper so they know you, put up your own mailbox nearby, and wait for their round. At the public mailbox, write a letter to yourself with the diamond inside, then open your mailbox to collect it. Mail sent here stays here."
+    ]
+  },
+  "pvp_preset": 1,
+  "needs": ["village-mail"],
+  "preset": {
+    "name": "Village Mail",
+    "icon": "village-mail:mailbox",
+    "pvp": false,
+    "game_mode": "survival",
+    "entry_kit": [
+      {"slot": 0, "item": {"id": "village-mail:public_mailbox", "count": 1}},
+      {"slot": 1, "item": {"id": "village-mail:mailbox", "count": 1}},
+      {"slot": 2, "item": {"id": "minecraft:paper", "count": 24}},
+      {"slot": 3, "item": {"id": "minecraft:diamond", "count": 1}},
+      {"slot": 4, "item": {"id": "minecraft:emerald", "count": 10}},
+      {"slot": 5, "item": {"id": "minecraft:poppy", "count": 4}},
+      {"slot": 6, "item": {"id": "minecraft:bread", "count": 8}}
+    ],
+    "respawn_kit": "entry",
+    "goal": "time",
+    "mobs": "always",
+    "mob_rarity": "rare",
+    "mob_default": "off",
+    "mob_levels": { "minecraft:villager": "normal" },
+    "life": 15,
+    "size": 3,
+    "world": "overworld",
+    "shape": "natural",
+    "biome": "minecraft:plains",
+    "weather": "clear"
+  }
+}

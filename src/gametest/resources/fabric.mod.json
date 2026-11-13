@@ -2,13 +2,14 @@
 	"schemaVersion": 1,
 	"id": "village-mail-gametest",
 	"version": "1.0.0",
-	"name": "Village Mail smoke test",
-	"description": "Loads the mod, joins a world, and fails if anything on the way threw.",
+	"name": "Village Mail game tests",
+	"description": "Loads the mod and joins a world, then checks mail carries nothing into or out of a PvP Dimensions arena.",
 	"license": "MIT",
 	"environment": "*",
 	"entrypoints": {
 		"fabric-client-gametest": [
-			"justfatlard.village_mail.gametest.SmokeTest"
+			"justfatlard.village_mail.gametest.SmokeTest",
+			"justfatlard.village_mail.gametest.NothingThroughAnArena"
 		]
 	},
 	"depends": {

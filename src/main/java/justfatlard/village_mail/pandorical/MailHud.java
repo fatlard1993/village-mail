@@ -6,7 +6,7 @@ import justfatlard.pandorical.api.HudBuilder;
 import justfatlard.pandorical.api.PandoricalApi;
 import justfatlard.pandorical.protocol.ComponentUpdate;
 
-import justfatlard.village_mail.mail.PlayerMailStorage;
+import justfatlard.village_mail.mail.ArenaPost;
 
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
@@ -37,8 +37,8 @@ public final class MailHud {
 	public static void updateUnreadCount(ServerPlayer player) {
 		if (!PandoricalApi.isAvailable(player) || !PandoricalApi.hasCapability(player, "hud")) return;
 
-		PlayerMailStorage storage = PlayerMailStorage.get(player.level().getServer());
-		int count = storage.getUnreadCount(player.getUUID());
+		// What is waiting where the player stands: an arena's own post inside a PvP Dimensions arena.
+		int count = ArenaPost.letters(player).getUnreadCount(player.getUUID());
 		UUID uuid = player.getUUID();
 
 		if (count <= 0) {

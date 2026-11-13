@@ -50,7 +50,7 @@ public class MailDeliveryManager {
 	/**
 	 * Tracks a mail person actively walking to a player's mailbox.
 	 */
-	private record ActiveDelivery(UUID villagerUuid, BlockPos targetMailbox, UUID mailboxOwner, long startTick) {}
+	private record ActiveDelivery(UUID villagerUuid, BlockPos targetMailbox, UUID mailboxOwner, long startTick, boolean arena) {}
 	private final List<DelayedTask> delayedTasks = new ArrayList<>();
 
 	private static final int VILLAGER_MAIL_INTERVAL = 6000; // 5 minutes in ticks
@@ -358,7 +358,9 @@ public class MailDeliveryManager {
 				continue;
 			}
 
-			MailboxBlockEntity mailbox = findPlayerMailbox(server, delivery.mailboxOwner());
+			MailboxBlockEntity mailbox = delivery.arena()
+				? findArenaMailbox(server, delivery.mailboxOwner())
+				: findPlayerMailbox(server, delivery.mailboxOwner());
 			if (mailbox == null) {
 				deliveryIt.remove();
 				continue;
@@ -385,7 +387,7 @@ public class MailDeliveryManager {
 
 			if (villager.blockPosition().closerThan(delivery.targetMailbox(), 3.0)) {
 				sendVillagerMail(mailbox, villager, server);
-				storage.setVillagerMailCooldown(delivery.targetMailbox(), currentTime);
+				markVisited(storage, delivery.arena(), delivery.mailboxOwner(), delivery.targetMailbox(), currentTime);
 				deliveryIt.remove();
 			} else {
 				// Re-issue navigation in case it got interrupted
@@ -402,11 +404,18 @@ public class MailDeliveryManager {
 		// Entity search runs per player, O(players * entities_in_box). For a small SMP this is fine.
 		// On larger servers, consider staggering players across ticks.
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			MailboxBlockEntity mailbox = findPlayerMailbox(server, player.getUUID());
+			// In a PvP Dimensions arena the mail person calls at the player's arena mailbox, and
+			// what it leaves stays in the arena's post. See ArenaPost.
+			boolean arena = ArenaPost.isArena(player.level());
+			MailboxBlockEntity mailbox = arena
+				? findArenaMailbox(server, player.getUUID())
+				: findPlayerMailbox(server, player.getUUID());
 			if (mailbox == null) continue;
 
 			BlockPos pos = mailbox.getBlockPos();
-			Optional<Long> lastTime = storage.getVillagerMailCooldown(pos);
+			Optional<Long> lastTime = arena
+				? ArenaPost.get().lastVisit(player.getUUID())
+				: storage.getVillagerMailCooldown(pos);
 
 			if (lastTime.isPresent() && currentTime - lastTime.get() <= VILLAGER_MAIL_INTERVAL) continue;
 
@@ -433,13 +442,13 @@ public class MailDeliveryManager {
 
 				if (mailPerson.blockPosition().closerThan(pos, 3.0)) {
 					sendVillagerMail(mailbox, mailPerson, server);
-					storage.setVillagerMailCooldown(pos, currentTime);
+					markVisited(storage, arena, player.getUUID(), pos, currentTime);
 				} else {
 					mailPerson.getNavigation().moveTo(
 						pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5, 0.6
 					);
 					activeDeliveries.put(player.getUUID(), new ActiveDelivery(
-						mailPerson.getUUID(), pos, player.getUUID(), currentTick
+						mailPerson.getUUID(), pos, player.getUUID(), currentTick, arena
 					));
 				}
 			}
@@ -459,8 +468,21 @@ public class MailDeliveryManager {
 		return villager.getGossips().getReputation(player, type -> true) > 0;
 	}
 
+	/** The mail person has called: noted where it counts, the arena's post or the server's. */
+	private static void markVisited(PlayerMailStorage storage, boolean arena, UUID owner, BlockPos pos, long gameTime) {
+		if (arena) {
+			ArenaPost.get().setLastVisit(owner, gameTime);
+		} else {
+			storage.setVillagerMailCooldown(pos, gameTime);
+		}
+	}
+
 	private void sendVillagerMail(MailboxBlockEntity mailbox, Villager villager, MinecraftServer server) {
 		if (mailbox.getOwnerUuid() == null) return;
+		if (ArenaPost.isArena(mailbox.getLevel())) {
+			sendArenaVillagerMail(mailbox, villager, server);
+			return;
+		}
 
 		float roll = ThreadLocalRandom.current().nextFloat();
 
@@ -479,6 +501,34 @@ public class MailDeliveryManager {
 				owner.sendSystemMessage(Component.translatable("village-mail.delivery.villager_gift").withStyle(ChatFormatting.YELLOW), true);
 			}
 		}
+	}
+
+	/**
+	 * A call at a mailbox in a PvP Dimensions arena. The first always leaves a small gift, since an
+	 * arena lasts minutes and a call that left nothing would be the only one somebody trying the mod
+	 * ever saw; after that, the usual odds, less the quest letters, which are the server's own mail.
+	 * The gift is made in the arena and stays in the arena's post, so it is thrown away with the
+	 * rest of the arena's things.
+	 */
+	private void sendArenaVillagerMail(MailboxBlockEntity mailbox, Villager villager, MinecraftServer server) {
+		ServerPlayer owner = server.getPlayerList().getPlayer(mailbox.getOwnerUuid());
+		if (owner == null || owner.level() != mailbox.getLevel()) return;
+		boolean firstCall = ArenaPost.get().lastVisit(owner.getUUID()).isEmpty();
+		if (!firstCall && ThreadLocalRandom.current().nextFloat() >= 0.30f) return;
+
+		ItemStack gift = getRandomVillagerGift();
+		if (gift.isEmpty()) return;
+		MailMessage message = new MailMessage.Builder()
+			.sender(villager.getUUID(), villager.getName().getString())
+			.recipient(owner.getUUID())
+			.type(MailMessage.MessageType.VILLAGER)
+			.body(Component.translatable("village-mail.delivery.villager_gift_body").getString())
+			.attachment(gift)
+			.button(MessageButton.collectItems())
+			.build();
+		ArenaPost.get().deliver(owner, message);
+		owner.sendSystemMessage(Component.translatable("village-mail.delivery.villager_gift").withStyle(ChatFormatting.YELLOW), true);
+		justfatlard.village_mail.pandorical.MailHud.updateUnreadCount(owner);
 	}
 
 	private void sendVillagerGift(MailboxBlockEntity mailbox, Villager villager, MinecraftServer server) {
@@ -708,6 +758,21 @@ public class MailDeliveryManager {
 		if (source.is(DamageTypes.EXPLOSION) || source.is(DamageTypes.BAD_RESPAWN_POINT)) {
 			return "An explosion. Nothing left to find.";
 		}
+		return null;
+	}
+
+	/** This player's mailbox in the arena they are standing in, if it is still there and loaded. */
+	private MailboxBlockEntity findArenaMailbox(MinecraftServer server, UUID playerUuid) {
+		ServerPlayer player = server.getPlayerList().getPlayer(playerUuid);
+		if (player == null || !ArenaPost.isArena(player.level())) return null;
+		Optional<BlockPos> pos = ArenaPost.get().mailbox(player);
+		if (pos.isEmpty()) return null;
+		ServerLevel level = player.level();
+		if (!level.hasChunk(pos.get().getX() >> 4, pos.get().getZ() >> 4)) return null;
+		if (level.getBlockEntity(pos.get()) instanceof MailboxBlockEntity mailbox && playerUuid.equals(mailbox.getOwnerUuid())) {
+			return mailbox;
+		}
+		ArenaPost.get().removeMailbox(playerUuid, pos.get());
 		return null;
 	}
 

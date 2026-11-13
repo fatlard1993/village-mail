@@ -28,7 +28,7 @@ import org.slf4j.LoggerFactory;
  * Stores all messages in the world's data folder, surviving mailbox destruction.
  * All of a player's mailboxes share the same message storage.
  */
-public class PlayerMailStorage {
+public class PlayerMailStorage implements Letters {
 	private static final Logger LOGGER = LoggerFactory.getLogger("village-mail");
 	private static final String DATA_FILE = "village_mail_messages.dat";
 	private static final int DATA_VERSION = 1; // Increment on format changes to enable migration
@@ -307,6 +307,10 @@ public class PlayerMailStorage {
 	 * Delivers any pending messages.
 	 */
 	public void registerMailbox(UUID playerUuid, String dimension, net.minecraft.core.BlockPos pos) {
+		// A mailbox in a PvP Dimensions arena belongs to the arena's own post, never to this one:
+		// registered here it moved the player's real mailbox into a plot that is deleted when the
+		// arena ends. See ArenaPost. The blocks route there themselves; this is the backstop.
+		if (ArenaPost.isArena(dimension)) return;
 		playersWithMailbox.add(playerUuid);
 		mailboxLocations.put(playerUuid, new MailboxLocation(dimension, pos));
 
@@ -661,8 +665,16 @@ public class PlayerMailStorage {
 				for (String uuidStr : locationsNbt.keySet()) {
 					UUID playerUuid = UUID.fromString(uuidStr);
 					locationsNbt.getCompound(uuidStr).ifPresent(locNbt -> {
-						mailboxLocations.put(playerUuid, MailboxLocation.fromNbt(locNbt));
+						MailboxLocation location = MailboxLocation.fromNbt(locNbt);
 						playersWithMailbox.add(playerUuid);
+						// One left in an arena by an older version, pointing into a plot that is gone or
+						// about to be: dropped, the way a broken mailbox is. Opening any mailbox outside
+						// an arena registers it again.
+						if (ArenaPost.isArena(location.dimension())) {
+							dirty = true;
+							return;
+						}
+						mailboxLocations.put(playerUuid, location);
 					});
 				}
 			});

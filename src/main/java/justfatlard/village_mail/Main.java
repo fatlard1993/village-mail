@@ -4,6 +4,7 @@ import justfatlard.pandorical.api.BlockRegistration;
 import justfatlard.pandorical.api.ItemRegistration;
 import justfatlard.pandorical.api.PandoricalApi;
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.entity.event.v1.ServerEntityLevelChangeEvents;
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -41,6 +42,7 @@ import justfatlard.village_mail.block.MailboxBlock;
 import justfatlard.village_mail.block.MailboxBlockEntity;
 import justfatlard.village_mail.block.PublicMailboxBlock;
 import justfatlard.village_mail.block.PublicMailboxBlockEntity;
+import justfatlard.village_mail.mail.ArenaPost;
 import justfatlard.village_mail.mail.MailDeliveryManager;
 import justfatlard.village_mail.mail.PlayerMailStorage;
 import justfatlard.village_mail.pandorical.MailHud;
@@ -169,7 +171,20 @@ public class Main implements ModInitializer {
 		LOGGER.info("Registered profession: " + MAIL_PERSON_ID + " with POI: " + PUBLIC_MAILBOX_POI);
 
 		ServerTickEvents.END_SERVER_TICK.register(MAIL_MANAGER::tick);
-		ServerLifecycleEvents.SERVER_STOPPING.register(server -> MAIL_MANAGER.reset());
+		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+			MAIL_MANAGER.reset();
+			ArenaPost.get().clear();
+		});
+
+		// Into or out of a PvP Dimensions arena: the arena's post is left behind, and a mail
+		// screen still open is shut on this side of the line, where its attachment is dealt
+		// with by where the screen was opened. See ArenaPost and MailScreens.
+		ServerEntityLevelChangeEvents.AFTER_PLAYER_CHANGE_LEVEL.register((player, from, to) -> {
+			if (!ArenaPost.isArena(from) && !ArenaPost.isArena(to)) return;
+			ArenaPost.get().leave(player.getUUID());
+			MailScreens.crossedArenaLine(player);
+			MailHud.updateUnreadCount(player);
+		});
 
 		// Zombification runs after the death event, so the obituary has to be told
 		// the "dead" villager is coming back. See MailDeliveryManager.convertedNotDead.
