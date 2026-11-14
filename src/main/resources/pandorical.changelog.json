@@ -4,6 +4,9 @@
     "It needs Pandorical on the server and on the client; without it you get a chat message instead of a mail screen."
   ],
   "versions": {
+    "1.0.6": [
+      "Mail can't carry anything into or out of a PvP Dimensions arena, and a demo to play there."
+    ],
     "1.0.5": [
       "Drop changelog notes for changes nothing in the game shows."
     ],
