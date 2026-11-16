@@ -7,15 +7,20 @@ import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.util.Util;
 import net.minecraft.world.level.storage.LevelResource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * The notices pinned to a village's public mailbox.
@@ -50,6 +55,8 @@ public class VillageBulletin {
 
 	private MinecraftServer server;
 	private final List<Notice> notices = new ArrayList<>();
+	/** Saves written off the server thread, one after another in the order they were made. */
+	private CompletableFuture<Void> writing = CompletableFuture.completedFuture(null);
 
 	/** One posting: what happened, where, and when. */
 	public record Notice(String dimension, BlockPos pos, long postedAt, String text) {}
@@ -69,6 +76,7 @@ public class VillageBulletin {
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
 			if (INSTANCE != null) {
 				INSTANCE.save();
+				INSTANCE.writing.join();
 				INSTANCE = null;
 			}
 		});
@@ -122,28 +130,39 @@ public class VillageBulletin {
 	}
 
 	private File getDataFile() {
-		Path dataDir = server.getWorldPath(LevelResource.ROOT).resolve("data");
-		dataDir.toFile().mkdirs();
-		return dataDir.resolve(FILE_NAME).toFile();
+		return server.getWorldPath(LevelResource.ROOT).resolve("data").resolve(FILE_NAME).toFile();
 	}
 
 	public void save() {
 		if (server == null) return;
+		CompoundTag root = new CompoundTag();
+		ListTag list = new ListTag();
+		for (Notice notice : notices) {
+			CompoundTag tag = new CompoundTag();
+			tag.putString("Dimension", notice.dimension());
+			tag.putInt("X", notice.pos().getX());
+			tag.putInt("Y", notice.pos().getY());
+			tag.putInt("Z", notice.pos().getZ());
+			tag.putLong("PostedAt", notice.postedAt());
+			tag.putString("Text", notice.text());
+			list.add(tag);
+		}
+		root.put("Notices", list);
+		Path file = getDataFile().toPath();
+		writing = writing.thenRunAsync(() -> write(root, file), Util.ioPool());
+	}
+
+	/** Through a temporary file, so a crash mid-write leaves the last save whole. */
+	private static void write(CompoundTag root, Path file) {
 		try {
-			CompoundTag root = new CompoundTag();
-			ListTag list = new ListTag();
-			for (Notice notice : notices) {
-				CompoundTag tag = new CompoundTag();
-				tag.putString("Dimension", notice.dimension());
-				tag.putInt("X", notice.pos().getX());
-				tag.putInt("Y", notice.pos().getY());
-				tag.putInt("Z", notice.pos().getZ());
-				tag.putLong("PostedAt", notice.postedAt());
-				tag.putString("Text", notice.text());
-				list.add(tag);
+			Files.createDirectories(file.getParent());
+			Path temporary = file.resolveSibling(FILE_NAME + ".tmp");
+			NbtIo.writeCompressed(root, temporary);
+			try {
+				Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+			} catch (AtomicMoveNotSupportedException e) {
+				Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
 			}
-			root.put("Notices", list);
-			NbtIo.writeCompressed(root, getDataFile().toPath());
 		} catch (Exception e) {
 			LOGGER.error("Failed to save village bulletin: {}", e.getMessage());
 		}
