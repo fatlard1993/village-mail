@@ -4,6 +4,10 @@
     "It needs Pandorical on the server and on the client; without it you get a chat message instead of a mail screen."
   ],
   "versions": {
+    "1.0.7": [
+      "Mail saves to disk off the server thread.",
+      "Village notice boards save off the server thread, and through a temporary file so a crash mid-save can't wipe them."
+    ],
     "1.0.6": [
       "Mail can't carry anything into or out of a PvP Dimensions arena, and a demo to play there."
     ],
