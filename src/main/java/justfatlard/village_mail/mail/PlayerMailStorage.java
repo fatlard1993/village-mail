@@ -12,6 +12,7 @@ import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.network.chat.Component;
 import net.minecraft.ChatFormatting;
+import net.minecraft.util.Util;
 
 import java.io.File;
 import java.nio.file.Files;
@@ -19,6 +20,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,6 +60,8 @@ public class PlayerMailStorage implements Letters {
 
 	private static final int AUTO_SAVE_INTERVAL = 6000; // 5 minutes in ticks
 	private int ticksSinceLastSave = 0;
+	/** Saves written off the server thread, one after another in the order they were made. */
+	private CompletableFuture<Void> writing = CompletableFuture.completedFuture(null);
 
 	/**
 	 * Tracks a mailbox's physical location for delivery lookup.
@@ -103,6 +107,7 @@ public class PlayerMailStorage implements Letters {
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
 			if (INSTANCE != null) {
 				INSTANCE.save();
+				INSTANCE.writing.join();
 				LOGGER.info("Saved mail storage");
 				INSTANCE = null;
 			}
@@ -523,44 +528,48 @@ public class PlayerMailStorage implements Letters {
 		}
 		nbt.put("villagerMailCooldowns", cooldownsNbt);
 
-		// Write to temp file, then atomic rename for crash safety
+		File file = getDataFile();
+		if (file == null) return;
+		dirty = false;
+		writing = writing.thenRunAsync(() -> {
+			if (!write(nbt, file)) server.execute(this::markDirty);
+		}, Util.ioPool());
+	}
+
+	/** Write to temp file, then atomic rename for crash safety. False if it could not be written. */
+	private static boolean write(CompoundTag nbt, File file) {
 		try {
-			File file = getDataFile();
-			if (file != null) {
-				file.getParentFile().mkdirs();
-				Path filePath = file.toPath();
-				Path tempPath = filePath.resolveSibling(DATA_FILE + ".tmp");
-				Path backupPath = filePath.resolveSibling(DATA_FILE + ".bak");
+			file.getParentFile().mkdirs();
+			Path filePath = file.toPath();
+			Path tempPath = filePath.resolveSibling(DATA_FILE + ".tmp");
+			Path backupPath = filePath.resolveSibling(DATA_FILE + ".bak");
 
-				NbtIo.writeCompressed(nbt, tempPath);
+			NbtIo.writeCompressed(nbt, tempPath);
 
-				if (file.exists()) {
-					Files.move(filePath, backupPath, StandardCopyOption.REPLACE_EXISTING);
-				}
-				try {
-					Files.move(tempPath, filePath, StandardCopyOption.ATOMIC_MOVE);
-				} catch (IOException e) {
-					// ATOMIC_MOVE not supported on this filesystem, fall back
-					Files.move(tempPath, filePath, StandardCopyOption.REPLACE_EXISTING);
-				}
-				Files.deleteIfExists(backupPath);
-				dirty = false;
+			if (file.exists()) {
+				Files.move(filePath, backupPath, StandardCopyOption.REPLACE_EXISTING);
 			}
-		} catch (IOException e) {
+			try {
+				Files.move(tempPath, filePath, StandardCopyOption.ATOMIC_MOVE);
+			} catch (IOException e) {
+				// ATOMIC_MOVE not supported on this filesystem, fall back
+				Files.move(tempPath, filePath, StandardCopyOption.REPLACE_EXISTING);
+			}
+			Files.deleteIfExists(backupPath);
+			return true;
+		} catch (IOException | RuntimeException e) {
 			LOGGER.error("Failed to save mail storage: " + e.getMessage());
 			// Try to restore from backup if the main file was moved
 			try {
-				File file = getDataFile();
-				if (file != null) {
-					Path backupPath = file.toPath().resolveSibling(DATA_FILE + ".bak");
-					if (Files.exists(backupPath) && !file.exists()) {
-						Files.move(backupPath, file.toPath(), StandardCopyOption.REPLACE_EXISTING);
-						LOGGER.info("Restored mail data from backup after save failure");
-					}
+				Path backupPath = file.toPath().resolveSibling(DATA_FILE + ".bak");
+				if (Files.exists(backupPath) && !file.exists()) {
+					Files.move(backupPath, file.toPath(), StandardCopyOption.REPLACE_EXISTING);
+					LOGGER.info("Restored mail data from backup after save failure");
 				}
 			} catch (IOException restoreEx) {
 				LOGGER.error("Failed to restore backup after save failure: " + restoreEx.getMessage());
 			}
+			return false;
 		}
 	}
 
