@@ -3,7 +3,7 @@
  "id": "village-mail",
  "version": "${version}",
  "name": "Village Mail",
- "description": "A postal system that feels like it was always part of Minecraft. Send letters with item attachments through the village post office, buy a mailbox from the local mail person, and receive deliveries. UI is driven through Pandorical — players without the Pandorical mod get a chat message instead of a mail screen.",
+ "description": "A postal system for villages: letters with items, carried for you",
  "authors": [
   "justfatlard"
  ],
