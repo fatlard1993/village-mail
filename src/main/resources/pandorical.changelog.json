@@ -4,6 +4,9 @@
     "It needs Pandorical on the server and on the client; without it you get a chat message instead of a mail screen."
   ],
   "versions": {
+    "1.0.8": [
+      "Describes itself in one short line of what it adds."
+    ],
     "1.0.7": [
       "Mail saves to disk off the server thread.",
       "Village notice boards save off the server thread, and through a temporary file so a crash mid-save can't wipe them."
